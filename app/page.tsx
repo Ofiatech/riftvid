@@ -27,8 +27,6 @@ import {
   Video,
   Library,
   ChevronRight,
-  PanelLeftClose,
-  PanelLeft,
 } from 'lucide-react';
 
 /* ============================================================
@@ -80,7 +78,7 @@ const thumbnailGradients: Record<string, string> = {
  * Sidebar.tsx
  * ============================================================ */
 
-function Sidebar({ collapsed }: { collapsed: boolean }) {
+function Sidebar() {
   const [activeItem, setActiveItem] = useState('Home');
   const { user } = useUser();
 
@@ -101,7 +99,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
   ];
 
   return (
-    <aside className={`fixed left-0 top-0 h-screen border-r border-[#141821] bg-[#07070a]/80 backdrop-blur-xl z-20 flex flex-col transition-all duration-300 ${collapsed ? 'w-16 overflow-hidden' : 'w-64'}`}>
+    <aside className="fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/80 backdrop-blur-xl z-20 flex flex-col">
       <div className="px-6 pt-6 pb-8">
         <div className="flex items-center gap-2.5">
           <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
@@ -193,7 +191,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 function Topbar({ onNewGeneration }: { onNewGeneration: () => void }) {
   return (
     <div className="sticky top-0 z-10 border-b border-[#141821] bg-[#050505]/70 backdrop-blur-xl">
-      <div className="flex items-center justify-between px-10 py-4">
+      <div className="flex items-center justify-between px-4 sm:px-10 py-4 gap-3">
         <div className="flex items-center gap-3 flex-1 max-w-xl">
           <div className="relative flex-1">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" strokeWidth={2} />
@@ -202,12 +200,12 @@ function Topbar({ onNewGeneration }: { onNewGeneration: () => void }) {
               placeholder="Search projects, avatars, templates..."
               className="w-full pl-10 pr-4 py-2 bg-white/[0.03] border border-[#1f2937] rounded-lg text-[13px] placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all"
             />
-            <kbd className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium text-zinc-500 bg-white/[0.04] border border-white/[0.06] px-1.5 py-0.5 rounded">
+            <kbd className="hidden sm:block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium text-zinc-500 bg-white/[0.04] border border-white/[0.06] px-1.5 py-0.5 rounded">
               ⌘K
             </kbd>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button className="relative p-2 rounded-lg hover:bg-white/[0.04] transition-colors">
             <Bell className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />
             <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-purple-400" />
@@ -217,7 +215,7 @@ function Topbar({ onNewGeneration }: { onNewGeneration: () => void }) {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-white/[0.08] to-white/[0.04] border border-white/[0.08] hover:from-white/[0.12] hover:to-white/[0.06] transition-all text-[13px] font-medium shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" strokeWidth={2.25} />
-            New project
+            <span className="hidden sm:inline">New project</span>
           </button>
         </div>
       </div>
@@ -234,12 +232,10 @@ function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
   const displayName = user?.firstName || user?.username || 'Creator';
 
   return (
-    <div className="relative rounded-3xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.08] via-[#0a0a0b] to-blue-500/[0.05] p-8 md:p-10 overflow-hidden">
-      {/* Ambient glow orbs */}
+    <div className="relative rounded-3xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.08] via-[#0a0a0b] to-blue-500/[0.05] p-6 sm:p-8 md:p-10 overflow-hidden">
       <div className="absolute -top-32 -right-32 w-80 h-80 rounded-full bg-purple-500/20 blur-[100px] opacity-60" />
       <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-blue-500/15 blur-[100px] opacity-50" />
 
-      {/* Grain texture */}
       <div className="absolute inset-0 opacity-[0.015] mix-blend-overlay pointer-events-none"
         style={{
           backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")`,
@@ -252,19 +248,18 @@ function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
           Riftvid Studio
         </div>
 
-        <h1 className="text-[36px] md:text-[44px] font-semibold tracking-tight leading-[1.1] text-white mb-3">
+        <h1 className="text-[28px] sm:text-[36px] md:text-[44px] font-semibold tracking-tight leading-[1.1] text-white mb-3">
           Create Cinematic Magic,{' '}
           <span className="bg-gradient-to-r from-purple-300 to-blue-300 bg-clip-text text-transparent">
             {displayName}.
           </span>
         </h1>
 
-        <p className="text-[15px] text-zinc-400 leading-relaxed mb-8 max-w-lg">
+        <p className="text-[14px] sm:text-[15px] text-zinc-400 leading-relaxed mb-6 sm:mb-8 max-w-lg">
           The ultimate AI motion engine at your fingertips. Upload an image, describe the motion, and watch it come alive.
         </p>
 
-        {/* Stats row */}
-        <div className="flex items-center gap-8 mb-8">
+        <div className="flex items-center gap-6 sm:gap-8 mb-6 sm:mb-8">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
               <BarChart2 className="w-4 h-4 text-purple-300" strokeWidth={2} />
@@ -285,16 +280,15 @@ function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
           </div>
         </div>
 
-        {/* CTAs */}
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={onNewGeneration}
-            className="group relative flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[14px] font-semibold shadow-lg shadow-purple-500/30 transition-all hover:shadow-purple-500/50 hover:-translate-y-0.5"
+            className="group relative flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] sm:text-[14px] font-semibold shadow-lg shadow-purple-500/30 transition-all hover:shadow-purple-500/50 hover:-translate-y-0.5"
           >
             <Upload className="w-4 h-4" strokeWidth={2.25} />
             New Generation
           </button>
-          <button className="flex items-center gap-2 px-5 py-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-[#1f2937] hover:border-[#2d3748] text-white text-[14px] font-semibold transition-all">
+          <button className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-[#1f2937] hover:border-[#2d3748] text-white text-[13px] sm:text-[14px] font-semibold transition-all">
             <Library className="w-4 h-4" strokeWidth={2} />
             My Library
           </button>
@@ -321,7 +315,7 @@ interface ToolCardProps {
 
 function ToolCard({ title, description, icon, gradient, tag, tagColor, badge, cta }: ToolCardProps) {
   return (
-    <button className="group relative text-left rounded-2xl border border-[#1f2937] bg-[#0a0a0b] p-5 overflow-hidden transition-all duration-300 hover:border-[#2d3748] lift grain">
+    <button className="group relative text-left rounded-2xl border border-[#1f2937] bg-[#0a0a0b] p-4 sm:p-5 overflow-hidden transition-all duration-300 hover:border-[#2d3748] lift grain">
       <div className={`absolute -top-16 -right-16 w-40 h-40 rounded-full ${gradient} blur-3xl opacity-40 group-hover:opacity-70 transition-opacity duration-500`} />
 
       <div className="relative z-10">
@@ -341,8 +335,8 @@ function ToolCard({ title, description, icon, gradient, tag, tagColor, badge, ct
           </div>
         </div>
 
-        <h3 className="text-[14px] font-semibold text-white mb-1 tracking-tight">{title}</h3>
-        <p className="text-[12px] text-zinc-400 leading-relaxed mb-4">{description}</p>
+        <h3 className="text-[13px] sm:text-[14px] font-semibold text-white mb-1 tracking-tight">{title}</h3>
+        <p className="text-[11px] sm:text-[12px] text-zinc-400 leading-relaxed mb-4">{description}</p>
 
         <div className="flex items-center gap-1 text-[11px] font-medium text-zinc-500 group-hover:text-white transition-colors">
           <span>{cta}</span>
@@ -380,7 +374,7 @@ function VideoCard({ video }: { video: Video }) {
         </div>
       </div>
       <div className="mt-3 px-0.5">
-        <h4 className="text-[13px] font-medium text-white truncate group-hover:text-purple-200 transition-colors">{video.title}</h4>
+        <h4 className="text-[12px] sm:text-[13px] font-medium text-white truncate group-hover:text-purple-200 transition-colors">{video.title}</h4>
         <p className="text-[11px] text-zinc-500 mt-0.5">{video.createdAt}</p>
       </div>
     </div>
@@ -558,86 +552,81 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 
 export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   return (
     <div className="min-h-screen bg-[#050505] text-white relative">
-      <Sidebar collapsed={!sidebarOpen} />
+      <Sidebar />
 
-      <main className={`relative z-[1] transition-all duration-300 ${sidebarOpen ? 'ml-64' : 'ml-16'}`}>
-        <div className="sticky top-0 z-10 border-b border-[#141821] bg-[#050505]/70 backdrop-blur-xl">
-          <div className="flex items-center gap-3 px-10 py-4">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-2 rounded-lg hover:bg-white/[0.04] transition-colors"
-              aria-label="Toggle sidebar"
-            >
-              {sidebarOpen ? (
-                <PanelLeftClose className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />
-              ) : (
-                <PanelLeft className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />
-              )}
-            </button>
-            <div className="flex items-center gap-3 flex-1 max-w-xl">
-              <div className="relative flex-1">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" strokeWidth={2} />
-                <input
-                  type="text"
-                  placeholder="Search projects, avatars, templates..."
-                  className="w-full pl-10 pr-4 py-2 bg-white/[0.03] border border-[#1f2937] rounded-lg text-[13px] placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all"
-                />
-                <kbd className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium text-zinc-500 bg-white/[0.04] border border-white/[0.06] px-1.5 py-0.5 rounded">
-                  ⌘K
-                </kbd>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button className="relative p-2 rounded-lg hover:bg-white/[0.04] transition-colors">
-                <Bell className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />
-                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-purple-400" />
-              </button>
-              <button
-                onClick={() => setModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-white/[0.08] to-white/[0.04] border border-white/[0.08] hover:from-white/[0.12] hover:to-white/[0.06] transition-all text-[13px] font-medium shadow-sm"
-              >
-                <Plus className="w-3.5 h-3.5" strokeWidth={2.25} />
-                New project
-              </button>
-            </div>
-          </div>
-        </div>
+      <main className="ml-64 relative z-[1]">
+        <Topbar onNewGeneration={() => setModalOpen(true)} />
 
-        <div className="px-10 py-8 max-w-[1400px] fade-up">
+        <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
+          {/* Hero card */}
           <section className="mb-8">
             <HeroCard onNewGeneration={() => setModalOpen(true)} />
           </section>
 
-          <section className="mb-12">
+          {/* Studio Tools grid — 2 cols on mobile, 4 on desktop */}
+          <section className="mb-10 sm:mb-12">
             <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider mb-4">
               Studio Tools
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <ToolCard title="Image to Motion" description="Transform any still into cinematic video" icon={<Video className="w-5 h-5 text-purple-300" strokeWidth={1.75} />} gradient="bg-purple-500" tag="Core" tagColor="bg-purple-500/15 text-purple-300 border border-purple-500/20" cta="Generate" />
-              <ToolCard title="Generate from Prompt" description="Describe your video in plain English. AI handles it all" icon={<Sparkles className="w-5 h-5 text-blue-300" strokeWidth={1.75} />} gradient="bg-blue-500" tag="AI" tagColor="bg-blue-500/15 text-blue-300 border border-blue-500/20" badge="New" cta="Create" />
-              <ToolCard title="Translate Video" description="Dub any video into 40+ languages with lip-sync" icon={<Globe className="w-5 h-5 text-emerald-300" strokeWidth={1.75} />} gradient="bg-emerald-500" tag="Presets" tagColor="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20" cta="Translate" />
-              <ToolCard title="Digital Twin" description="Create a photoreal AI avatar from 2 min of footage" icon={<UserPlus className="w-5 h-5 text-rose-300" strokeWidth={1.75} />} gradient="bg-rose-500" tag="Vault" tagColor="bg-amber-500/15 text-amber-300 border border-amber-500/20" cta="Create twin" />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+              <ToolCard
+                title="Image to Motion"
+                description="Transform any still into cinematic video"
+                icon={<Video className="w-5 h-5 text-purple-300" strokeWidth={1.75} />}
+                gradient="bg-purple-500"
+                tag="Core"
+                tagColor="bg-purple-500/15 text-purple-300 border border-purple-500/20"
+                cta="Generate"
+              />
+              <ToolCard
+                title="Generate from Prompt"
+                description="Describe your video in plain English. AI handles it all"
+                icon={<Sparkles className="w-5 h-5 text-blue-300" strokeWidth={1.75} />}
+                gradient="bg-blue-500"
+                tag="AI"
+                tagColor="bg-blue-500/15 text-blue-300 border border-blue-500/20"
+                badge="New"
+                cta="Create"
+              />
+              <ToolCard
+                title="Translate Video"
+                description="Dub any video into 40+ languages with lip-sync"
+                icon={<Globe className="w-5 h-5 text-emerald-300" strokeWidth={1.75} />}
+                gradient="bg-emerald-500"
+                tag="Presets"
+                tagColor="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
+                cta="Translate"
+              />
+              <ToolCard
+                title="Digital Twin"
+                description="Create a photoreal AI avatar from 2 min of footage"
+                icon={<UserPlus className="w-5 h-5 text-rose-300" strokeWidth={1.75} />}
+                gradient="bg-rose-500"
+                tag="Vault"
+                tagColor="bg-amber-500/15 text-amber-300 border border-amber-500/20"
+                cta="Create twin"
+              />
             </div>
           </section>
 
+          {/* Recent Projects — 2 cols on mobile, max 4 shown */}
           <section>
-            <div className="flex items-center justify-between mb-5">
+            <div className="flex items-center justify-between mb-5 gap-2">
               <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider">Recent Projects</h2>
               <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1 p-0.5 rounded-lg bg-white/[0.03] border border-[#1f2937]">
+                <div className="hidden sm:flex items-center gap-1 p-0.5 rounded-lg bg-white/[0.03] border border-[#1f2937]">
                   <button className="px-2.5 py-1 text-[12px] rounded-md bg-white/[0.06] text-white font-medium">All</button>
                   <button className="px-2.5 py-1 text-[12px] rounded-md text-zinc-400 hover:text-white transition-colors">Completed</button>
                   <button className="px-2.5 py-1 text-[12px] rounded-md text-zinc-400 hover:text-white transition-colors">Drafts</button>
                 </div>
-                <button className="text-[12px] text-zinc-400 hover:text-white transition-colors font-medium">View all →</button>
+                <button className="text-[12px] text-zinc-400 hover:text-white transition-colors font-medium whitespace-nowrap">View all →</button>
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-              {mockVideos.map((video) => (
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
+              {mockVideos.slice(0, 4).map((video) => (
                 <VideoCard key={video.id} video={video} />
               ))}
             </div>

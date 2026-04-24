@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useUser, UserButton } from '@clerk/nextjs';
 import {
   Home,
   FolderClosed,
@@ -10,11 +11,9 @@ import {
   BarChart3,
   Settings,
   HelpCircle,
-  ChevronsUpDown,
   Search,
   Bell,
   Plus,
-  ArrowRight,
   Sparkles,
   Globe,
   UserPlus,
@@ -27,8 +26,9 @@ import {
   X,
   Video,
   Library,
-  Package,
   ChevronRight,
+  PanelLeftClose,
+  PanelLeft,
 } from 'lucide-react';
 
 /* ============================================================
@@ -36,10 +36,7 @@ import {
  * ============================================================ */
 
 const mockUser = {
-  name: 'Alex Morgan',
-  email: 'alex@riftvid.ai',
   plan: 'Pro',
-  avatar: 'AM',
   credits: 847,
   creditsMax: 1000,
   totalJobs: 12,
@@ -83,8 +80,11 @@ const thumbnailGradients: Record<string, string> = {
  * Sidebar.tsx
  * ============================================================ */
 
-function Sidebar() {
+function Sidebar({ collapsed }: { collapsed: boolean }) {
   const [activeItem, setActiveItem] = useState('Home');
+  const { user } = useUser();
+
+  const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
 
   const navItems = [
     { name: 'Home', icon: Home },
@@ -101,7 +101,7 @@ function Sidebar() {
   ];
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/80 backdrop-blur-xl z-20 flex flex-col">
+    <aside className={`fixed left-0 top-0 h-screen border-r border-[#141821] bg-[#07070a]/80 backdrop-blur-xl z-20 flex flex-col transition-all duration-300 ${collapsed ? 'w-16 overflow-hidden' : 'w-64'}`}>
       <div className="px-6 pt-6 pb-8">
         <div className="flex items-center gap-2.5">
           <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
@@ -163,20 +163,24 @@ function Sidebar() {
         })}
       </div>
 
+      {/* Clerk-powered user block — click avatar for full menu including Sign Out */}
       <div className="px-3 pb-4">
-        <button className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.03] transition-colors">
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center text-[13px] font-semibold shadow-md shadow-purple-500/20 shrink-0">
-            {mockUser.avatar}
-          </div>
+        <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.03] transition-colors">
+          <UserButton
+            appearance={{
+              elements: {
+                avatarBox: 'w-9 h-9 shadow-md shadow-purple-500/20',
+              },
+            }}
+          />
           <div className="flex-1 text-left min-w-0">
-            <div className="text-[13px] font-medium text-white truncate">{mockUser.name}</div>
+            <div className="text-[13px] font-medium text-white truncate">{displayName}</div>
             <div className="text-[11px] text-zinc-500 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               {mockUser.plan}
             </div>
           </div>
-          <ChevronsUpDown className="w-4 h-4 text-zinc-500 shrink-0" strokeWidth={2} />
-        </button>
+        </div>
       </div>
     </aside>
   );
@@ -226,6 +230,9 @@ function Topbar({ onNewGeneration }: { onNewGeneration: () => void }) {
  * ============================================================ */
 
 function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
+  const { user } = useUser();
+  const displayName = user?.firstName || user?.username || 'Creator';
+
   return (
     <div className="relative rounded-3xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.08] via-[#0a0a0b] to-blue-500/[0.05] p-8 md:p-10 overflow-hidden">
       {/* Ambient glow orbs */}
@@ -248,7 +255,7 @@ function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
         <h1 className="text-[36px] md:text-[44px] font-semibold tracking-tight leading-[1.1] text-white mb-3">
           Create Cinematic Magic,{' '}
           <span className="bg-gradient-to-r from-purple-300 to-blue-300 bg-clip-text text-transparent">
-            {mockUser.name.split(' ')[0]}.
+            {displayName}.
           </span>
         </h1>
 
@@ -410,19 +417,15 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-[fade-in_0.2s_ease-out]" onClick={onClose}>
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
-      {/* Modal */}
       <div
         className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Ambient glow */}
         <div className="absolute -top-20 -left-20 w-64 h-64 rounded-full bg-purple-500/20 blur-[80px] opacity-50 pointer-events-none" />
 
         <div className="relative p-6 md:p-8">
-          {/* Header */}
           <div className="flex items-start justify-between mb-6">
             <div>
               <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-2">
@@ -437,7 +440,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             </button>
           </div>
 
-          {/* Upload area */}
           <div className="mb-5">
             <label className="block text-[12px] font-medium text-zinc-300 mb-2">Upload Media</label>
 
@@ -469,7 +471,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             </button>
           </div>
 
-          {/* Motion prompt */}
           <div className="mb-5">
             <label className="block text-[12px] font-medium text-zinc-300 mb-2">Motion Prompt</label>
             <textarea
@@ -481,7 +482,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             />
           </div>
 
-          {/* Rift Assistant toggle */}
           <div className={`relative rounded-xl border p-4 mb-5 transition-all ${
             aiOptimization
               ? 'border-purple-500/30 bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.03]'
@@ -512,7 +512,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                 <p className="text-[11px] text-zinc-400">AI prompt enrichment</p>
               </div>
 
-              {/* Toggle switch */}
               <button
                 onClick={() => setAiOptimization(!aiOptimization)}
                 className={`relative w-11 h-6 rounded-full transition-all shrink-0 ${
@@ -528,7 +527,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           </div>
 
-          {/* Footer actions */}
           <div className="flex items-center justify-between pt-4 border-t border-[#141821]">
             <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
               <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/50" strokeWidth={2} />
@@ -560,67 +558,72 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 
 export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   return (
     <div className="min-h-screen bg-[#050505] text-white relative">
-      <Sidebar />
+      <Sidebar collapsed={!sidebarOpen} />
 
-      <main className="ml-64 relative z-[1]">
-        <Topbar onNewGeneration={() => setModalOpen(true)} />
+      <main className={`relative z-[1] transition-all duration-300 ${sidebarOpen ? 'ml-64' : 'ml-16'}`}>
+        <div className="sticky top-0 z-10 border-b border-[#141821] bg-[#050505]/70 backdrop-blur-xl">
+          <div className="flex items-center gap-3 px-10 py-4">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-lg hover:bg-white/[0.04] transition-colors"
+              aria-label="Toggle sidebar"
+            >
+              {sidebarOpen ? (
+                <PanelLeftClose className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />
+              ) : (
+                <PanelLeft className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />
+              )}
+            </button>
+            <div className="flex items-center gap-3 flex-1 max-w-xl">
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" strokeWidth={2} />
+                <input
+                  type="text"
+                  placeholder="Search projects, avatars, templates..."
+                  className="w-full pl-10 pr-4 py-2 bg-white/[0.03] border border-[#1f2937] rounded-lg text-[13px] placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all"
+                />
+                <kbd className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium text-zinc-500 bg-white/[0.04] border border-white/[0.06] px-1.5 py-0.5 rounded">
+                  ⌘K
+                </kbd>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="relative p-2 rounded-lg hover:bg-white/[0.04] transition-colors">
+                <Bell className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />
+                <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-purple-400" />
+              </button>
+              <button
+                onClick={() => setModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-white/[0.08] to-white/[0.04] border border-white/[0.08] hover:from-white/[0.12] hover:to-white/[0.06] transition-all text-[13px] font-medium shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" strokeWidth={2.25} />
+                New project
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div className="px-10 py-8 max-w-[1400px] fade-up">
-          {/* Hero card */}
           <section className="mb-8">
             <HeroCard onNewGeneration={() => setModalOpen(true)} />
           </section>
 
-          {/* Studio Tools grid */}
           <section className="mb-12">
             <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider mb-4">
               Studio Tools
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <ToolCard
-                title="Image to Motion"
-                description="Transform any still into cinematic video"
-                icon={<Video className="w-5 h-5 text-purple-300" strokeWidth={1.75} />}
-                gradient="bg-purple-500"
-                tag="Core"
-                tagColor="bg-purple-500/15 text-purple-300 border border-purple-500/20"
-                cta="Generate"
-              />
-              <ToolCard
-                title="Generate from Prompt"
-                description="Describe your video in plain English. AI handles it all"
-                icon={<Sparkles className="w-5 h-5 text-blue-300" strokeWidth={1.75} />}
-                gradient="bg-blue-500"
-                tag="AI"
-                tagColor="bg-blue-500/15 text-blue-300 border border-blue-500/20"
-                badge="New"
-                cta="Create"
-              />
-              <ToolCard
-                title="Translate Video"
-                description="Dub any video into 40+ languages with lip-sync"
-                icon={<Globe className="w-5 h-5 text-emerald-300" strokeWidth={1.75} />}
-                gradient="bg-emerald-500"
-                tag="Presets"
-                tagColor="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
-                cta="Translate"
-              />
-              <ToolCard
-                title="Digital Twin"
-                description="Create a photoreal AI avatar from 2 min of footage"
-                icon={<UserPlus className="w-5 h-5 text-rose-300" strokeWidth={1.75} />}
-                gradient="bg-rose-500"
-                tag="Vault"
-                tagColor="bg-amber-500/15 text-amber-300 border border-amber-500/20"
-                cta="Create twin"
-              />
+              <ToolCard title="Image to Motion" description="Transform any still into cinematic video" icon={<Video className="w-5 h-5 text-purple-300" strokeWidth={1.75} />} gradient="bg-purple-500" tag="Core" tagColor="bg-purple-500/15 text-purple-300 border border-purple-500/20" cta="Generate" />
+              <ToolCard title="Generate from Prompt" description="Describe your video in plain English. AI handles it all" icon={<Sparkles className="w-5 h-5 text-blue-300" strokeWidth={1.75} />} gradient="bg-blue-500" tag="AI" tagColor="bg-blue-500/15 text-blue-300 border border-blue-500/20" badge="New" cta="Create" />
+              <ToolCard title="Translate Video" description="Dub any video into 40+ languages with lip-sync" icon={<Globe className="w-5 h-5 text-emerald-300" strokeWidth={1.75} />} gradient="bg-emerald-500" tag="Presets" tagColor="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20" cta="Translate" />
+              <ToolCard title="Digital Twin" description="Create a photoreal AI avatar from 2 min of footage" icon={<UserPlus className="w-5 h-5 text-rose-300" strokeWidth={1.75} />} gradient="bg-rose-500" tag="Vault" tagColor="bg-amber-500/15 text-amber-300 border border-amber-500/20" cta="Create twin" />
             </div>
           </section>
 
-          {/* Recent Projects */}
           <section>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider">Recent Projects</h2>
@@ -644,7 +647,6 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* Modal */}
       <NewGenerationModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );

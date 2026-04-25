@@ -32,7 +32,7 @@ import {
   Loader2,
   Check,
   RefreshCw,
-  ImageIcon,
+  Eye,
 } from 'lucide-react';
 
 /* ============================================================
@@ -316,7 +316,7 @@ function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
 }
 
 /* ============================================================
- * ToolCard
+ * ToolCard / VideoCard / StatusBadge
  * ============================================================ */
 
 interface ToolCardProps {
@@ -360,10 +360,6 @@ function ToolCard({ title, description, icon, gradient, tag, tagColor, badge, ct
     </button>
   );
 }
-
-/* ============================================================
- * VideoCard
- * ============================================================ */
 
 function VideoCard({ video }: { video: Video }) {
   return (
@@ -413,25 +409,33 @@ function StatusBadge({ status, progress }: { status: VideoStatus; progress?: num
 }
 
 /* ============================================================
- * NewGenerationModal — with WORKING file picker + chat
+ * NewGenerationModal — SMART RIFT
  * ============================================================ */
 
-type ChatMode = 'idle' | 'asking' | 'refining' | 'done';
+type ChatMode = 'idle' | 'asking' | 'refining' | 'done' | 'error';
 
 interface RiftQuestion {
   question: string;
   options: string[];
+  acknowledgmentBeforeQuestion?: string;
 }
 
-const TOTAL_STEPS = 4;
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 
-// Helper to format file size
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -439,18 +443,21 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
   const [aiOptimization, setAiOptimization] = useState(true);
   const [prompt, setPrompt] = useState('');
 
-  // File state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState('');
   const [fileError, setFileError] = useState<string | null>(null);
 
-  // Chat state
+  // Smart Rift state
   const [chatMode, setChatMode] = useState<ChatMode>('idle');
   const [basePrompt, setBasePrompt] = useState('');
   const [currentQuestion, setCurrentQuestion] = useState<RiftQuestion | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [step, setStep] = useState(0);
+  const [totalSteps, setTotalSteps] = useState(4);
+  const [imageDescription, setImageDescription] = useState<string | null>(null);
+  const [sceneAcknowledgment, setSceneAcknowledgment] = useState<string | null>(null);
+  const [finalAcknowledgment, setFinalAcknowledgment] = useState<string | null>(null);
   const [customAnswer, setCustomAnswer] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -459,12 +466,9 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (showCustomInput) {
-      customInputRef.current?.focus();
-    }
+    if (showCustomInput) customInputRef.current?.focus();
   }, [showCustomInput]);
 
-  // Cleanup blob URL when component unmounts or file changes
   useEffect(() => {
     return () => {
       if (previewUrl && previewUrl.startsWith('blob:')) {
@@ -481,6 +485,10 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     setCurrentQuestion(null);
     setAnswers([]);
     setStep(0);
+    setTotalSteps(4);
+    setImageDescription(null);
+    setSceneAcknowledgment(null);
+    setFinalAcknowledgment(null);
     setCustomAnswer('');
     setShowCustomInput(false);
     setError(null);
@@ -491,35 +499,24 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     onClose();
   };
 
-  // --- FILE PICKER LOGIC ---
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Validate file type
     if (!ALLOWED_TYPES.includes(file.type)) {
       setFileError('Please upload PNG, JPG, or WebP only');
-      e.target.value = ''; // Reset input
+      e.target.value = '';
       return;
     }
-
-    // Validate file size
     if (file.size > MAX_FILE_SIZE) {
       setFileError(`File too large. Max ${formatFileSize(MAX_FILE_SIZE)}`);
       e.target.value = '';
       return;
     }
-
-    // Create preview blob URL
     const blobUrl = URL.createObjectURL(file);
-
-    // Cleanup old preview if exists
     if (previewUrl && previewUrl.startsWith('blob:')) {
       URL.revokeObjectURL(previewUrl);
     }
-
     setSelectedFile(file);
     setPreviewUrl(blobUrl);
   };
@@ -530,14 +527,11 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     }
     setSelectedFile(null);
     setPreviewUrl(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleUrlSubmit = () => {
     if (!imageUrl.trim()) return;
-    // Basic URL validation
     try {
       new URL(imageUrl);
       setPreviewUrl(imageUrl);
@@ -553,32 +547,66 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     setImageUrl('');
   };
 
-  // --- RIFT CHAT LOGIC ---
-
-  const callRift = async (currentAnswers: string[], currentStep: number) => {
+  // Rift API call — passes prompt directly to avoid React state timing bug
+  const callRift = async (
+    currentAnswers: string[],
+    currentStep: number,
+    cachedImageDescription: string | null,
+    cachedTotalSteps: number,
+    imageBase64?: string,
+    overrideBasePrompt?: string
+  ) => {
     setError(null);
     try {
       const res = await fetch('/api/rift-assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ basePrompt, answers: currentAnswers, step: currentStep }),
+        body: JSON.stringify({
+          basePrompt: overrideBasePrompt ?? basePrompt,
+          answers: currentAnswers,
+          step: currentStep,
+          imageBase64: currentStep === 0 ? imageBase64 : undefined,
+          imageDescription: cachedImageDescription,
+          totalSteps: cachedTotalSteps,
+        }),
       });
-
-      if (!res.ok) throw new Error('Failed to reach Rift Assistant');
 
       const data = await res.json();
 
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to reach Rift Assistant');
+      }
+
+      // Update totalSteps from AI's decision
+      if (data.totalSteps && data.totalSteps !== cachedTotalSteps) {
+        setTotalSteps(data.totalSteps);
+      }
+
+      // Cache image description and scene acknowledgment from step 0
+      if (data.imageDescription && !cachedImageDescription) {
+        setImageDescription(data.imageDescription);
+      }
+      if (data.sceneAcknowledgment) {
+        setSceneAcknowledgment(data.sceneAcknowledgment);
+      }
+
       if (data.done && data.refinedPrompt) {
+        setFinalAcknowledgment(data.acknowledgmentBeforeQuestion || null);
         setPrompt(data.refinedPrompt);
         setChatMode('done');
       } else if (data.question && data.options) {
-        setCurrentQuestion({ question: data.question, options: data.options });
+        setCurrentQuestion({
+          question: data.question,
+          options: data.options,
+          acknowledgmentBeforeQuestion: data.acknowledgmentBeforeQuestion,
+        });
         setChatMode('asking');
       }
     } catch (err) {
-      console.error(err);
-      setError('Rift had a hiccup. Try again or turn off AI assistance.');
-      setChatMode('idle');
+      console.error('Rift error:', err);
+      const message = err instanceof Error ? err.message : 'Something went wrong';
+      setError(message);
+      setChatMode('error');
     }
   };
 
@@ -587,11 +615,27 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
       setError('Please describe your video idea first');
       return;
     }
-    setBasePrompt(prompt);
+    const currentPrompt = prompt;
+    setBasePrompt(currentPrompt);
     setAnswers([]);
     setStep(0);
+    setImageDescription(null);
+    setSceneAcknowledgment(null);
+    setFinalAcknowledgment(null);
     setChatMode('refining');
-    await callRift([], 0);
+
+    let imageBase64: string | undefined;
+    if (selectedFile) {
+      try {
+        imageBase64 = await fileToBase64(selectedFile);
+      } catch (err) {
+        console.error('Failed to read image:', err);
+      }
+    } else if (previewUrl && previewUrl.startsWith('http')) {
+      imageBase64 = previewUrl;
+    }
+
+    await callRift([], 0, null, 4, imageBase64, currentPrompt);
   };
 
   const handleAnswer = async (answer: string) => {
@@ -602,12 +646,30 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     setShowCustomInput(false);
     setCustomAnswer('');
     setChatMode('refining');
-    await callRift(newAnswers, newStep);
+    await callRift(newAnswers, newStep, imageDescription, totalSteps);
   };
 
   const handleCustomSubmit = () => {
-    if (customAnswer.trim()) {
-      handleAnswer(customAnswer.trim());
+    if (customAnswer.trim()) handleAnswer(customAnswer.trim());
+  };
+
+  const handleRetry = async () => {
+    setError(null);
+    setChatMode('refining');
+    if (answers.length === 0) {
+      let imageBase64: string | undefined;
+      if (selectedFile) {
+        try {
+          imageBase64 = await fileToBase64(selectedFile);
+        } catch (err) {
+          console.error('Failed to read image:', err);
+        }
+      } else if (previewUrl && previewUrl.startsWith('http')) {
+        imageBase64 = previewUrl;
+      }
+      await callRift([], 0, null, 4, imageBase64, basePrompt);
+    } else {
+      await callRift(answers, step, imageDescription, totalSteps);
     }
   };
 
@@ -615,6 +677,10 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     setChatMode('idle');
     setAnswers([]);
     setStep(0);
+    setTotalSteps(4);
+    setImageDescription(null);
+    setSceneAcknowledgment(null);
+    setFinalAcknowledgment(null);
     setCurrentQuestion(null);
     setBasePrompt('');
     setError(null);
@@ -626,7 +692,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
       : previewUrl
       ? `🔗 URL: ${previewUrl}`
       : '⚠️ No image selected';
-
     alert(`🎬 Generate video:\n\n${fileInfo}\n\n📝 Prompt:\n${prompt}`);
   };
 
@@ -646,9 +711,11 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
               <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-2">
                 <Sparkles className="w-2.5 h-2.5" strokeWidth={2.5} />
                 {chatMode === 'asking' || chatMode === 'refining'
-                  ? `Rift is helping · Step ${Math.min(step + 1, TOTAL_STEPS)} of ${TOTAL_STEPS}`
+                  ? `Rift is helping · Step ${Math.min(step + 1, totalSteps)} of ${totalSteps}`
                   : chatMode === 'done'
                   ? 'Refined Prompt Ready'
+                  : chatMode === 'error'
+                  ? 'Connection Issue'
                   : 'New Generation'}
               </div>
               <h2 className="text-[22px] font-semibold text-white tracking-tight">
@@ -667,12 +734,9 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
           {(chatMode === 'idle' || chatMode === 'done') && (
             <div className="mb-5">
               <label className="block text-[12px] font-medium text-zinc-300 mb-2">Upload Media</label>
-
-              {/* Show preview card if file/URL selected */}
               {previewUrl ? (
                 <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-3">
                   <div className="flex items-center gap-3">
-                    {/* Thumbnail */}
                     <div className="relative w-14 h-14 rounded-lg overflow-hidden border border-white/[0.08] shrink-0 bg-[#050505]">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
@@ -685,7 +749,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                         }}
                       />
                     </div>
-                    {/* Info */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 mb-0.5">
                         <Check className="w-3 h-3 text-emerald-400" strokeWidth={2.5} />
@@ -700,7 +763,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                           : 'External URL'}
                       </div>
                     </div>
-                    {/* Remove button */}
                     <button
                       onClick={selectedFile ? handleRemoveFile : handleRemoveUrl}
                       className="p-2 rounded-lg hover:bg-rose-500/10 hover:text-rose-300 text-zinc-500 transition-colors shrink-0"
@@ -750,15 +812,11 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                   )}
                 </>
               )}
-
-              {/* File error */}
               {fileError && (
                 <div className="mt-2 px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[12px] text-rose-300">
                   {fileError}
                 </div>
               )}
-
-              {/* Toggle file/URL — only show if no preview */}
               {!previewUrl && (
                 <button
                   onClick={() => {
@@ -792,92 +850,166 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             </div>
 
             {(chatMode === 'idle' || chatMode === 'done') && (
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={chatMode === 'done' ? 6 : 3}
-                placeholder={aiOptimization ? "Describe your video idea... Rift will refine it for you" : "Write your full cinematic prompt here..."}
-                className="w-full px-4 py-3 bg-white/[0.03] border border-[#1f2937] rounded-xl text-[14px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all resize-none"
-              />
+              <>
+                {/* Final acknowledgment shown above textarea on done */}
+                {chatMode === 'done' && finalAcknowledgment && (
+                  <div className="mb-3 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/20">
+                    <div className="w-6 h-6 rounded-md bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <Sparkles className="w-3 h-3 text-white" strokeWidth={2} />
+                    </div>
+                    <div className="text-[13px] text-zinc-200 leading-relaxed">{finalAcknowledgment}</div>
+                  </div>
+                )}
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={chatMode === 'done' ? 6 : 3}
+                  placeholder={aiOptimization ? "Describe your video idea... Rift will refine it for you" : "Write your full cinematic prompt here..."}
+                  className="w-full px-4 py-3 bg-white/[0.03] border border-[#1f2937] rounded-xl text-[14px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all resize-none"
+                />
+              </>
             )}
 
             {chatMode === 'refining' && (
               <div className="rounded-xl border border-[#1f2937] bg-white/[0.02] p-8 flex flex-col items-center text-center">
                 <Loader2 className="w-8 h-8 text-purple-400 animate-spin mb-3" strokeWidth={2} />
                 <div className="text-[14px] font-medium text-white mb-1">
-                  {step === 0 ? 'Rift is thinking...' : step === TOTAL_STEPS ? '✨ Crafting your cinematic prompt...' : 'Getting next question...'}
+                  {step === 0
+                    ? selectedFile || previewUrl
+                      ? '👁️ Rift is analyzing your image...'
+                      : 'Rift is thinking...'
+                    : step >= totalSteps
+                    ? '✨ Crafting your cinematic prompt...'
+                    : 'Thinking about your next question...'}
                 </div>
-                <div className="text-[12px] text-zinc-500">This takes just a moment</div>
+                <div className="text-[12px] text-zinc-500">
+                  {step === 0 && (selectedFile || previewUrl)
+                    ? 'Vision analysis takes a few extra seconds'
+                    : 'This takes just a moment'}
+                </div>
               </div>
             )}
 
             {chatMode === 'asking' && currentQuestion && (
-              <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5">
-                <div className="flex items-center gap-2 mb-4">
-                  {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-                    <div
-                      key={i}
-                      className={`h-1 flex-1 rounded-full transition-all ${
-                        i < step ? 'bg-purple-400' : i === step ? 'bg-purple-400/60' : 'bg-white/[0.06]'
-                      }`}
-                    />
-                  ))}
-                </div>
-
-                <div className="flex items-start gap-3 mb-4">
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
-                    <Sparkles className="w-4 h-4 text-white" strokeWidth={2} />
-                  </div>
-                  <div className="flex-1 pt-1">
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-300 mb-1">Rift Assistant</div>
-                    <div className="text-[15px] font-medium text-white leading-snug">{currentQuestion.question}</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  {currentQuestion.options.map((option, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => handleAnswer(option)}
-                      className="text-left px-3 py-2.5 rounded-lg bg-white/[0.04] hover:bg-purple-500/15 border border-white/[0.06] hover:border-purple-500/40 text-[13px] font-medium text-zinc-200 hover:text-white transition-all hover:-translate-y-0.5"
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-
-                {!showCustomInput ? (
-                  <button
-                    onClick={() => setShowCustomInput(true)}
-                    className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] border border-dashed border-white/[0.08] hover:border-purple-500/30 text-[12px] font-medium text-zinc-400 hover:text-white transition-all"
-                  >
-                    <span>✏️</span>
-                    Or type your own
-                  </button>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      ref={customInputRef}
-                      type="text"
-                      value={customAnswer}
-                      onChange={(e) => setCustomAnswer(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleCustomSubmit()}
-                      placeholder="Type your answer..."
-                      className="flex-1 px-3 py-2 bg-white/[0.04] border border-purple-500/30 rounded-lg text-[13px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/60 transition-all"
-                    />
-                    <button
-                      onClick={handleCustomSubmit}
-                      disabled={!customAnswer.trim()}
-                      className="px-3 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all"
-                    >
-                      <Check className="w-4 h-4" strokeWidth={2.5} />
-                    </button>
+              <div className="space-y-3">
+                {/* Scene acknowledgment bubble — shown only on step 0 */}
+                {step === 0 && sceneAcknowledgment && (
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/25 animate-[fade-in_0.4s_ease-out]">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
+                      <Eye className="w-4 h-4 text-white" strokeWidth={2} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-purple-300 mb-1">
+                        Rift saw your scene
+                      </div>
+                      <div className="text-[13px] text-zinc-200 leading-relaxed">{sceneAcknowledgment}</div>
+                    </div>
                   </div>
                 )}
+
+                {/* Acknowledgment of previous answer (steps 1+) */}
+                {step > 0 && currentQuestion.acknowledgmentBeforeQuestion && (
+                  <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] animate-[fade-in_0.3s_ease-out]">
+                    <div className="w-6 h-6 rounded-md bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0 mt-0.5">
+                      <Check className="w-3 h-3 text-purple-300" strokeWidth={2.5} />
+                    </div>
+                    <div className="text-[13px] text-zinc-300 leading-relaxed italic">
+                      {currentQuestion.acknowledgmentBeforeQuestion}
+                    </div>
+                  </div>
+                )}
+
+                {/* Question card */}
+                <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5 animate-[fade-in_0.3s_ease-out]">
+                  {/* Step indicator */}
+                  <div className="flex items-center gap-2 mb-4">
+                    {Array.from({ length: totalSteps }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`h-1 flex-1 rounded-full transition-all ${
+                          i < step ? 'bg-purple-400' : i === step ? 'bg-purple-400/60' : 'bg-white/[0.06]'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="flex items-start gap-3 mb-4">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
+                      <Sparkles className="w-4 h-4 text-white" strokeWidth={2} />
+                    </div>
+                    <div className="flex-1 pt-1">
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-300 mb-1">Rift Assistant</div>
+                      <div className="text-[15px] font-medium text-white leading-snug">{currentQuestion.question}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 mb-3">
+                    {currentQuestion.options.map((option, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleAnswer(option)}
+                        className="text-left px-3 py-2.5 rounded-lg bg-white/[0.04] hover:bg-purple-500/15 border border-white/[0.06] hover:border-purple-500/40 text-[13px] font-medium text-zinc-200 hover:text-white transition-all hover:-translate-y-0.5"
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+
+                  {!showCustomInput ? (
+                    <button
+                      onClick={() => setShowCustomInput(true)}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] border border-dashed border-white/[0.08] hover:border-purple-500/30 text-[12px] font-medium text-zinc-400 hover:text-white transition-all"
+                    >
+                      <span>✏️</span>
+                      Or type your own
+                    </button>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        ref={customInputRef}
+                        type="text"
+                        value={customAnswer}
+                        onChange={(e) => setCustomAnswer(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleCustomSubmit()}
+                        placeholder="Type your answer..."
+                        className="flex-1 px-3 py-2 bg-white/[0.04] border border-purple-500/30 rounded-lg text-[13px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/60 transition-all"
+                      />
+                      <button
+                        onClick={handleCustomSubmit}
+                        disabled={!customAnswer.trim()}
+                        className="px-3 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      >
+                        <Check className="w-4 h-4" strokeWidth={2.5} />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {error && (
+            {chatMode === 'error' && (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/[0.05] p-5 text-center">
+                <div className="text-[14px] font-medium text-rose-200 mb-1">Rift couldn&apos;t respond</div>
+                <div className="text-[12px] text-zinc-400 mb-4">{error}</div>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={handleRetry}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold transition-all"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" strokeWidth={2.25} />
+                    Try again
+                  </button>
+                  <button
+                    onClick={handleRestart}
+                    className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {error && chatMode !== 'error' && (
               <div className="mt-2 px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[12px] text-rose-300">
                 {error}
               </div>
@@ -907,12 +1039,12 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                     <span className="text-[13px] font-semibold text-white">Rift Assistant</span>
                     {aiOptimization && (
                       <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/30">
-                        Active
+                        Smart Mode
                       </span>
                     )}
                   </div>
                   <p className="text-[11px] text-zinc-400">
-                    {aiOptimization ? 'AI will refine your prompt with quick questions' : 'Skip AI — use your own prompt directly'}
+                    {aiOptimization ? 'Sees your image, asks scene-specific questions' : 'Skip AI — use your own prompt directly'}
                   </p>
                 </div>
                 <button

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useUser, UserButton } from '@clerk/nextjs';
 import {
   Home,
@@ -27,6 +27,7 @@ import {
   Video,
   Library,
   ChevronRight,
+  Menu,
 } from 'lucide-react';
 
 /* ============================================================
@@ -75,10 +76,10 @@ const thumbnailGradients: Record<string, string> = {
 };
 
 /* ============================================================
- * Sidebar.tsx
+ * Sidebar.tsx — slides in from left, scrim on mobile
  * ============================================================ */
 
-function Sidebar() {
+function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [activeItem, setActiveItem] = useState('Home');
   const { user } = useUser();
 
@@ -99,99 +100,131 @@ function Sidebar() {
   ];
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/80 backdrop-blur-xl z-20 flex flex-col">
-      <div className="px-6 pt-6 pb-8">
-        <div className="flex items-center gap-2.5">
-          <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
-            <Play className="w-4 h-4 text-white fill-white" strokeWidth={0} />
-          </div>
-          <span className="text-[17px] font-semibold tracking-tight">Riftvid</span>
-        </div>
-      </div>
+    <>
+      {/* Scrim — only on mobile when sidebar is open */}
+      <div
+        onClick={onClose}
+        className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${
+          open ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+        aria-hidden="true"
+      />
 
-      <nav className="flex-1 px-3 space-y-0.5">
-        <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-          Workspace
-        </div>
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeItem === item.name;
-          return (
-            <button
-              key={item.name}
-              onClick={() => setActiveItem(item.name)}
-              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] transition-all duration-200 ${
-                isActive ? 'bg-white/[0.06] text-white shadow-sm' : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'
-              }`}
-            >
-              <Icon className={`w-[18px] h-[18px] ${isActive ? 'text-purple-400' : ''}`} strokeWidth={1.75} />
-              <span className="font-medium">{item.name}</span>
-              {isActive && <span className="ml-auto w-1 h-1 rounded-full bg-purple-400" />}
-            </button>
-          );
-        })}
-      </nav>
-
-      <div className="px-3 pb-3">
-        <div className="rounded-xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.04] p-4 relative overflow-hidden">
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[12px] font-medium text-zinc-300">Credits</span>
-              <span className="text-[11px] text-zinc-500">{mockUser.credits}/{mockUser.creditsMax}</span>
+      <aside
+        className={`fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/95 backdrop-blur-xl z-40 flex flex-col transition-transform duration-300 ease-out ${
+          open ? 'translate-x-0' : '-translate-x-full'
+        } lg:translate-x-0`}
+      >
+        <div className="px-6 pt-6 pb-8 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
+              <Play className="w-4 h-4 text-white fill-white" strokeWidth={0} />
             </div>
-            <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-purple-400 to-blue-400 rounded-full" style={{ width: `${(mockUser.credits / mockUser.creditsMax) * 100}%` }} />
-            </div>
-            <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">
-              Upgrade plan
-            </button>
+            <span className="text-[17px] font-semibold tracking-tight">Riftvid</span>
           </div>
+          {/* Close button — only visible on mobile */}
+          <button
+            onClick={onClose}
+            className="lg:hidden p-1.5 rounded-lg hover:bg-white/[0.05] transition-colors"
+            aria-label="Close sidebar"
+          >
+            <X className="w-4 h-4 text-zinc-400" strokeWidth={2} />
+          </button>
         </div>
-      </div>
 
-      <div className="px-3 pb-3 space-y-0.5 border-t border-[#141821] pt-3">
-        {bottomItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.name} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200 transition-all">
-              <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} />
-              <span className="font-medium">{item.name}</span>
-            </button>
-          );
-        })}
-      </div>
+        <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
+          <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+            Workspace
+          </div>
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeItem === item.name;
+            return (
+              <button
+                key={item.name}
+                onClick={() => setActiveItem(item.name)}
+                className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] transition-all duration-200 ${
+                  isActive ? 'bg-white/[0.06] text-white shadow-sm' : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'
+                }`}
+              >
+                <Icon className={`w-[18px] h-[18px] ${isActive ? 'text-purple-400' : ''}`} strokeWidth={1.75} />
+                <span className="font-medium">{item.name}</span>
+                {isActive && <span className="ml-auto w-1 h-1 rounded-full bg-purple-400" />}
+              </button>
+            );
+          })}
+        </nav>
 
-      {/* Clerk-powered user block — click avatar for full menu including Sign Out */}
-      <div className="px-3 pb-4">
-        <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.03] transition-colors">
-          <UserButton
-            appearance={{
-              elements: {
-                avatarBox: 'w-9 h-9 shadow-md shadow-purple-500/20',
-              },
-            }}
-          />
-          <div className="flex-1 text-left min-w-0">
-            <div className="text-[13px] font-medium text-white truncate">{displayName}</div>
-            <div className="text-[11px] text-zinc-500 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              {mockUser.plan}
+        <div className="px-3 pb-3">
+          <div className="rounded-xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.04] p-4 relative overflow-hidden">
+            <div className="relative z-10">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[12px] font-medium text-zinc-300">Credits</span>
+                <span className="text-[11px] text-zinc-500">{mockUser.credits}/{mockUser.creditsMax}</span>
+              </div>
+              <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-purple-400 to-blue-400 rounded-full" style={{ width: `${(mockUser.credits / mockUser.creditsMax) * 100}%` }} />
+              </div>
+              <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">
+                Upgrade plan
+              </button>
             </div>
           </div>
         </div>
-      </div>
-    </aside>
+
+        <div className="px-3 pb-3 space-y-0.5 border-t border-[#141821] pt-3">
+          {bottomItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.name} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200 transition-all">
+                <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} />
+                <span className="font-medium">{item.name}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Clerk-powered user block */}
+        <div className="px-3 pb-4">
+          <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.03] transition-colors">
+            <UserButton
+              appearance={{
+                elements: {
+                  avatarBox: 'w-9 h-9 shadow-md shadow-purple-500/20',
+                },
+              }}
+            />
+            <div className="flex-1 text-left min-w-0">
+              <div className="text-[13px] font-medium text-white truncate">{displayName}</div>
+              <div className="text-[11px] text-zinc-500 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                {mockUser.plan}
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </>
   );
 }
 
 /* ============================================================
- * Topbar.tsx
+ * Topbar.tsx — with hamburger toggle for sidebar
  * ============================================================ */
 
-function Topbar({ onNewGeneration }: { onNewGeneration: () => void }) {
+function Topbar({ onNewGeneration, onToggleSidebar }: { onNewGeneration: () => void; onToggleSidebar: () => void }) {
   return (
-    <div className="sticky top-0 z-10 border-b border-[#141821] bg-[#050505]/70 backdrop-blur-xl">
+    <div className="sticky top-0 z-20 border-b border-[#141821] bg-[#050505]/70 backdrop-blur-xl">
       <div className="flex items-center justify-between px-4 sm:px-10 py-4 gap-3">
+        {/* Hamburger — visible on mobile + tablet, hidden on lg+ */}
+        <button
+          onClick={onToggleSidebar}
+          className="lg:hidden p-2 -ml-2 rounded-lg hover:bg-white/[0.04] transition-colors shrink-0"
+          aria-label="Open sidebar"
+        >
+          <Menu className="w-[20px] h-[20px] text-zinc-300" strokeWidth={2} />
+        </button>
+
         <div className="flex items-center gap-3 flex-1 max-w-xl">
           <div className="relative flex-1">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" strokeWidth={2} />
@@ -224,7 +257,7 @@ function Topbar({ onNewGeneration }: { onNewGeneration: () => void }) {
 }
 
 /* ============================================================
- * HeroCard.tsx — The big Riftvid Studio hero with stats
+ * HeroCard.tsx
  * ============================================================ */
 
 function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
@@ -299,7 +332,7 @@ function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
 }
 
 /* ============================================================
- * ToolCard.tsx — Smaller tool cards below the hero
+ * ToolCard.tsx
  * ============================================================ */
 
 interface ToolCardProps {
@@ -399,7 +432,7 @@ function StatusBadge({ status, progress }: { status: VideoStatus; progress?: num
 }
 
 /* ============================================================
- * NewGenerationModal.tsx — The upload + prompt modal
+ * NewGenerationModal.tsx
  * ============================================================ */
 
 function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -552,13 +585,40 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 
 export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
+  // Sidebar: closed by default on mobile, open on desktop (lg+)
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Auto-open sidebar on desktop, keep closed on mobile
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(min-width: 1024px)');
+    const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      setSidebarOpen(e.matches);
+    };
+    handleChange(mediaQuery);
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, []);
+
+  // Close sidebar with Escape key (mobile UX)
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && sidebarOpen && window.innerWidth < 1024) {
+        setSidebarOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [sidebarOpen]);
 
   return (
     <div className="min-h-screen bg-[#050505] text-white relative">
-      <Sidebar />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <main className="ml-64 relative z-[1]">
-        <Topbar onNewGeneration={() => setModalOpen(true)} />
+      <main className="lg:ml-64 relative z-[1]">
+        <Topbar
+          onNewGeneration={() => setModalOpen(true)}
+          onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+        />
 
         <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
           {/* Hero card */}
@@ -566,7 +626,7 @@ export default function Dashboard() {
             <HeroCard onNewGeneration={() => setModalOpen(true)} />
           </section>
 
-          {/* Studio Tools grid — 2 cols on mobile, 4 on desktop */}
+          {/* Studio Tools grid */}
           <section className="mb-10 sm:mb-12">
             <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider mb-4">
               Studio Tools
@@ -612,7 +672,7 @@ export default function Dashboard() {
             </div>
           </section>
 
-          {/* Recent Projects — 2 cols on mobile, max 4 shown */}
+          {/* Recent Projects */}
           <section>
             <div className="flex items-center justify-between mb-5 gap-2">
               <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider">Recent Projects</h2>

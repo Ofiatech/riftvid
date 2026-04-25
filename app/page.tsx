@@ -32,6 +32,7 @@ import {
   Loader2,
   Check,
   RefreshCw,
+  ImageIcon,
 } from 'lucide-react';
 
 /* ============================================================
@@ -412,7 +413,7 @@ function StatusBadge({ status, progress }: { status: VideoStatus; progress?: num
 }
 
 /* ============================================================
- * NewGenerationModal — with Rift Assistant chat (4 questions including voice/accent)
+ * NewGenerationModal — with WORKING file picker + chat
  * ============================================================ */
 
 type ChatMode = 'idle' | 'asking' | 'refining' | 'done';
@@ -423,12 +424,28 @@ interface RiftQuestion {
 }
 
 const TOTAL_STEPS = 4;
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+
+// Helper to format file size
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [useUrl, setUseUrl] = useState(false);
   const [aiOptimization, setAiOptimization] = useState(true);
   const [prompt, setPrompt] = useState('');
 
+  // File state
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState('');
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  // Chat state
   const [chatMode, setChatMode] = useState<ChatMode>('idle');
   const [basePrompt, setBasePrompt] = useState('');
   const [currentQuestion, setCurrentQuestion] = useState<RiftQuestion | null>(null);
@@ -439,12 +456,22 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
   const [error, setError] = useState<string | null>(null);
 
   const customInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (showCustomInput) {
       customInputRef.current?.focus();
     }
   }, [showCustomInput]);
+
+  // Cleanup blob URL when component unmounts or file changes
+  useEffect(() => {
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   if (!open) return null;
 
@@ -458,8 +485,75 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     setShowCustomInput(false);
     setError(null);
     setPrompt('');
+    handleRemoveFile();
+    setImageUrl('');
+    setFileError(null);
     onClose();
   };
+
+  // --- FILE PICKER LOGIC ---
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFileError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setFileError('Please upload PNG, JPG, or WebP only');
+      e.target.value = ''; // Reset input
+      return;
+    }
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+      setFileError(`File too large. Max ${formatFileSize(MAX_FILE_SIZE)}`);
+      e.target.value = '';
+      return;
+    }
+
+    // Create preview blob URL
+    const blobUrl = URL.createObjectURL(file);
+
+    // Cleanup old preview if exists
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
+    setSelectedFile(file);
+    setPreviewUrl(blobUrl);
+  };
+
+  const handleRemoveFile = () => {
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleUrlSubmit = () => {
+    if (!imageUrl.trim()) return;
+    // Basic URL validation
+    try {
+      new URL(imageUrl);
+      setPreviewUrl(imageUrl);
+      setSelectedFile(null);
+      setFileError(null);
+    } catch {
+      setFileError('Please enter a valid URL');
+    }
+  };
+
+  const handleRemoveUrl = () => {
+    setPreviewUrl(null);
+    setImageUrl('');
+  };
+
+  // --- RIFT CHAT LOGIC ---
 
   const callRift = async (currentAnswers: string[], currentStep: number) => {
     setError(null);
@@ -467,11 +561,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
       const res = await fetch('/api/rift-assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          basePrompt,
-          answers: currentAnswers,
-          step: currentStep,
-        }),
+        body: JSON.stringify({ basePrompt, answers: currentAnswers, step: currentStep }),
       });
 
       if (!res.ok) throw new Error('Failed to reach Rift Assistant');
@@ -531,7 +621,13 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
   };
 
   const handleGenerate = () => {
-    alert('🎬 Generate video with prompt:\n\n' + prompt);
+    const fileInfo = selectedFile
+      ? `📁 File: ${selectedFile.name} (${formatFileSize(selectedFile.size)})`
+      : previewUrl
+      ? `🔗 URL: ${previewUrl}`
+      : '⚠️ No image selected';
+
+    alert(`🎬 Generate video:\n\n${fileInfo}\n\n📝 Prompt:\n${prompt}`);
   };
 
   return (
@@ -571,31 +667,110 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
           {(chatMode === 'idle' || chatMode === 'done') && (
             <div className="mb-5">
               <label className="block text-[12px] font-medium text-zinc-300 mb-2">Upload Media</label>
-              {!useUrl ? (
-                <label className="block relative border-2 border-dashed border-[#1f2937] hover:border-purple-500/40 rounded-xl p-8 cursor-pointer transition-all bg-white/[0.01] hover:bg-purple-500/[0.02] group">
-                  <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" />
-                  <div className="flex flex-col items-center text-center">
-                    <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                      <Upload className="w-5 h-5 text-purple-300" strokeWidth={2} />
+
+              {/* Show preview card if file/URL selected */}
+              {previewUrl ? (
+                <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-3">
+                  <div className="flex items-center gap-3">
+                    {/* Thumbnail */}
+                    <div className="relative w-14 h-14 rounded-lg overflow-hidden border border-white/[0.08] shrink-0 bg-[#050505]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={previewUrl}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                        onError={() => {
+                          setFileError('Could not load image');
+                          handleRemoveUrl();
+                        }}
+                      />
                     </div>
-                    <div className="text-[14px] font-semibold text-white mb-1">Click to upload media</div>
-                    <div className="text-[11px] text-zinc-500">Gallery · Camera · Files — PNG, JPG, WebP</div>
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <Check className="w-3 h-3 text-emerald-400" strokeWidth={2.5} />
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">Ready</span>
+                      </div>
+                      <div className="text-[13px] font-medium text-white truncate">
+                        {selectedFile ? selectedFile.name : 'Image from URL'}
+                      </div>
+                      <div className="text-[11px] text-zinc-500">
+                        {selectedFile
+                          ? `${formatFileSize(selectedFile.size)} · ${selectedFile.type.split('/')[1].toUpperCase()}`
+                          : 'External URL'}
+                      </div>
+                    </div>
+                    {/* Remove button */}
+                    <button
+                      onClick={selectedFile ? handleRemoveFile : handleRemoveUrl}
+                      className="p-2 rounded-lg hover:bg-rose-500/10 hover:text-rose-300 text-zinc-500 transition-colors shrink-0"
+                      aria-label="Remove file"
+                    >
+                      <X className="w-4 h-4" strokeWidth={2} />
+                    </button>
                   </div>
-                </label>
+                </div>
               ) : (
-                <input
-                  type="url"
-                  placeholder="https://example.com/image.png"
-                  className="w-full px-4 py-3 bg-white/[0.03] border border-[#1f2937] rounded-xl text-[14px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all"
-                />
+                <>
+                  {!useUrl ? (
+                    <label className="block relative border-2 border-dashed border-[#1f2937] hover:border-purple-500/40 rounded-xl p-8 cursor-pointer transition-all bg-white/[0.01] hover:bg-purple-500/[0.02] group">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp"
+                        className="hidden"
+                        onChange={handleFileChange}
+                      />
+                      <div className="flex flex-col items-center text-center">
+                        <div className="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
+                          <Upload className="w-5 h-5 text-purple-300" strokeWidth={2} />
+                        </div>
+                        <div className="text-[14px] font-semibold text-white mb-1">Click to upload media</div>
+                        <div className="text-[11px] text-zinc-500">Gallery · Camera · Files — PNG, JPG, WebP · Max 10MB</div>
+                      </div>
+                    </label>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={imageUrl}
+                        onChange={(e) => setImageUrl(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleUrlSubmit()}
+                        placeholder="https://example.com/image.png"
+                        className="flex-1 px-4 py-3 bg-white/[0.03] border border-[#1f2937] rounded-xl text-[14px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all"
+                      />
+                      <button
+                        onClick={handleUrlSubmit}
+                        disabled={!imageUrl.trim()}
+                        className="px-4 py-3 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                      >
+                        Load
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
-              <button
-                onClick={() => setUseUrl(!useUrl)}
-                className="flex items-center gap-1.5 text-[12px] text-zinc-400 hover:text-purple-300 transition-colors mt-3"
-              >
-                <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
-                {useUrl ? 'Upload a file instead' : 'Use image URL instead'}
-              </button>
+
+              {/* File error */}
+              {fileError && (
+                <div className="mt-2 px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[12px] text-rose-300">
+                  {fileError}
+                </div>
+              )}
+
+              {/* Toggle file/URL — only show if no preview */}
+              {!previewUrl && (
+                <button
+                  onClick={() => {
+                    setUseUrl(!useUrl);
+                    setFileError(null);
+                  }}
+                  className="flex items-center gap-1.5 text-[12px] text-zinc-400 hover:text-purple-300 transition-colors mt-3"
+                >
+                  <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
+                  {useUrl ? 'Upload a file instead' : 'Use image URL instead'}
+                </button>
+              )}
             </div>
           )}
 
@@ -638,7 +813,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 
             {chatMode === 'asking' && currentQuestion && (
               <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5">
-                {/* Step indicator — 4 dots now */}
                 <div className="flex items-center gap-2 mb-4">
                   {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
                     <div

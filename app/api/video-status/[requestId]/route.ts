@@ -101,7 +101,7 @@ export async function GET(
     // Unknown status — treat as failed
     const response: StatusResponse = {
       status: 'failed',
-      error: `Unexpected status: ${statusInfo.status}`,
+      error: `Unexpected status: ${(statusInfo as { status: string }).status}`,
     };
     return NextResponse.json(response);
   } catch (error) {

@@ -3,40 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useUser, UserButton } from '@clerk/nextjs';
 import {
-  Home,
-  FolderClosed,
-  UserSquare2,
-  Mic,
-  Palette,
-  BarChart3,
-  Settings,
-  HelpCircle,
-  Search,
-  Bell,
-  Plus,
-  Sparkles,
-  Globe,
-  UserPlus,
-  Play,
-  Upload,
-  Zap,
-  BarChart2,
-  Link2,
-  Wand2,
-  X,
-  Video,
-  Library,
-  ChevronRight,
-  Menu,
-  ArrowLeft,
-  Loader2,
-  Check,
-  RefreshCw,
-  Eye,
-  Download,
-  Film,
-  Clock,
-  MessageCircle,
+  Home, FolderClosed, UserSquare2, Mic, Palette, BarChart3, Settings, HelpCircle,
+  Search, Bell, Plus, Sparkles, Globe, UserPlus, Play, Upload, Zap, BarChart2,
+  Link2, Wand2, X, Video, Library, ChevronRight, Menu, ArrowLeft, Loader2, Check,
+  RefreshCw, Eye, Download, Film, Clock, MessageCircle,
 } from 'lucide-react';
 
 const mockUser = { plan: 'Pro', credits: 847, creditsMax: 1000, totalJobs: 12 };
@@ -499,7 +469,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
   };
 
   const handleGenerate = async () => {
-    if (!prompt.trim()) { setGenError('Prompt is required'); return; }
+    if (!prompt.trim()) { setGenError('Please type or generate a prompt first'); return; }
     if (!selectedFile && !previewUrl) { setGenError('Please upload an image first'); return; }
     setGenMode('submitting'); setGenProgress(0); setGenError(null); setGenLogs([]); setGeneratedVideoUrl(null);
     try {
@@ -531,6 +501,9 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 
   const isGenerating = ['submitting', 'queued', 'processing'].includes(genMode);
 
+  // Guard: enable Generate Video button only when prompt + image are present
+  const canGenerate = prompt.trim().length > 0 && (selectedFile !== null || previewUrl !== null);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-[fade-in_0.2s_ease-out]" onClick={handleClose}>
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
@@ -547,14 +520,12 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                   isGenerating ? `Rendering · ${genProgress}%` :
                   chatMode === 'asking' || chatMode === 'refining' ? `Talking with Rift` :
                   chatMode === 'done' ? 'Refined Prompt Ready' :
-                  chatMode === 'error' ? 'Connection Issue' :
-                  'New Generation'}
+                  chatMode === 'error' ? 'Connection Issue' : 'New Generation'}
               </div>
               <h2 className="text-[22px] font-semibold text-white tracking-tight">
                 {genMode === 'completed' ? 'Your video is ready' :
                   isGenerating ? 'Creating your video...' :
-                  chatMode === 'done' ? 'Review your prompt' :
-                  'Create a new video'}
+                  chatMode === 'done' ? 'Review your prompt' : 'Create a new video'}
               </h2>
               <p className="text-[13px] text-zinc-400 mt-1">
                 {genMode === 'completed' ? 'Watch, download, or create another.' :
@@ -635,7 +606,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           )}
 
-          {/* IDLE / DONE — main UI */}
+          {/* IDLE / DONE main UI */}
           {!isGenerating && genMode !== 'completed' && genMode !== 'failed' && (
             <>
               {/* Upload */}
@@ -693,7 +664,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                 </div>
               )}
 
-              {/* Prompt textarea OR Chat UI */}
+              {/* Prompt textarea / chat UI */}
               <div className="mb-5">
                 <div className="flex items-center justify-between mb-2">
                   <label className="block text-[12px] font-medium text-zinc-300">
@@ -735,7 +706,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 
                 {chatMode === 'asking' && currentQuestion && (
                   <div className="space-y-3">
-                    {/* Scene acknowledgment — only on step 0 */}
                     {step === 0 && sceneAcknowledgment && (
                       <div className="flex items-start gap-3 p-4 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/25 animate-[fade-in_0.4s_ease-out]">
                         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
@@ -747,8 +717,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                         </div>
                       </div>
                     )}
-
-                    {/* Acknowledgment of previous answer */}
                     {step > 0 && currentQuestion.acknowledgmentBeforeQuestion && (
                       <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] animate-[fade-in_0.3s_ease-out]">
                         <div className="w-6 h-6 rounded-md bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0 mt-0.5">
@@ -757,8 +725,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                         <div className="text-[13px] text-zinc-300 leading-relaxed italic">{currentQuestion.acknowledgmentBeforeQuestion}</div>
                       </div>
                     )}
-
-                    {/* Question card — NO progress dots, just subtle conversational hint */}
                     <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5 animate-[fade-in_0.3s_ease-out]">
                       <div className="flex items-start gap-3 mb-4">
                         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
@@ -775,7 +741,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                           <div className="text-[15px] font-medium text-white leading-snug">{currentQuestion.question}</div>
                         </div>
                       </div>
-
                       <div className="grid grid-cols-2 gap-2 mb-3">
                         {currentQuestion.options.map((option, idx) => (
                           <button key={idx} onClick={() => handleAnswer(option)} className="text-left px-3 py-2.5 rounded-lg bg-white/[0.04] hover:bg-purple-500/15 border border-white/[0.06] hover:border-purple-500/40 text-[13px] font-medium text-zinc-200 hover:text-white transition-all hover:-translate-y-0.5">
@@ -783,7 +748,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                           </button>
                         ))}
                       </div>
-
                       {!showCustomInput ? (
                         <button onClick={() => setShowCustomInput(true)} className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] border border-dashed border-white/[0.08] hover:border-purple-500/30 text-[12px] font-medium text-zinc-400 hover:text-white transition-all">
                           <span>✏️</span> Or type your own
@@ -876,7 +840,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                         {aiOptimization && <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-500/30">Smart Mode</span>}
                       </div>
                       <p className="text-[11px] text-zinc-400">
-                        {aiOptimization ? 'Sees your image, asks scene-specific questions' : 'Skip AI — use your own prompt directly'}
+                        {aiOptimization ? 'Sees your image, asks scene-specific questions' : 'Skip AI — type your own prompt below'}
                       </p>
                     </div>
                     <button onClick={() => setAiOptimization(!aiOptimization)} className={`relative w-11 h-6 rounded-full transition-all shrink-0 ${aiOptimization ? 'bg-gradient-to-r from-purple-500 to-purple-400 shadow-lg shadow-purple-500/30' : 'bg-white/[0.08]'}`}>
@@ -898,7 +862,11 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
               {chatMode === 'idle' && genMode === 'idle' && (
                 <>
                   <button onClick={handleClose} className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">Cancel</button>
-                  <button onClick={aiOptimization ? handleStartRift : handleGenerate} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all">
+                  <button
+                    onClick={aiOptimization ? handleStartRift : handleGenerate}
+                    disabled={aiOptimization ? !prompt.trim() : !canGenerate}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
                     <Wand2 className="w-3.5 h-3.5" strokeWidth={2.25} />
                     {aiOptimization ? 'Generate with Rift' : 'Generate Video'}
                   </button>
@@ -913,7 +881,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                     <ArrowLeft className="w-3.5 h-3.5" strokeWidth={2} />
                     Back
                   </button>
-                  <button onClick={handleGenerate} disabled={!prompt.trim() || (!selectedFile && !previewUrl)} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+                  <button onClick={handleGenerate} disabled={!canGenerate} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                     <Play className="w-3.5 h-3.5 fill-white" strokeWidth={0} />
                     Generate Video
                   </button>

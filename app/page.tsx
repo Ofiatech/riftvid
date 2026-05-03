@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { useUser, UserButton } from '@clerk/nextjs';
 import {
   Home, FolderClosed, UserSquare2, Mic, Palette, BarChart3, Settings, HelpCircle,
@@ -28,7 +29,6 @@ interface VideoData {
   error_message: string | null;
 }
 
-// Format date as relative time
 function formatRelativeTime(iso: string): string {
   const now = Date.now();
   const then = new Date(iso).getTime();
@@ -45,15 +45,36 @@ function formatDuration(seconds: number): string {
   return `0:${seconds.toString().padStart(2, '0')}`;
 }
 
+async function downloadVideo(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Download failed');
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch (err) {
+    window.open(url, '_blank');
+  }
+}
+
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [activeItem, setActiveItem] = useState('Home');
   const { user } = useUser();
   const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
 
+  // Active item is "Home" since this is the home page
   const navItems = [
-    { name: 'Home', icon: Home }, { name: 'Projects', icon: FolderClosed },
-    { name: 'Avatars', icon: UserSquare2 }, { name: 'Voices', icon: Mic },
-    { name: 'Brand Kit', icon: Palette }, { name: 'Analytics', icon: BarChart3 },
+    { name: 'Home', icon: Home, href: '/' },
+    { name: 'Projects', icon: FolderClosed, href: '/library' },
+    { name: 'Avatars', icon: UserSquare2, href: '#' },
+    { name: 'Voices', icon: Mic, href: '#' },
+    { name: 'Brand Kit', icon: Palette, href: '#' },
+    { name: 'Analytics', icon: BarChart3, href: '#' },
   ];
   const bottomItems = [{ name: 'Settings', icon: Settings }, { name: 'Help', icon: HelpCircle }];
 
@@ -62,12 +83,12 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
       <div onClick={onClose} className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} aria-hidden="true" />
       <aside className={`fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/95 backdrop-blur-xl z-40 flex flex-col transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
         <div className="px-6 pt-6 pb-8 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+          <Link href="/" className="flex items-center gap-2.5">
             <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
               <Play className="w-4 h-4 text-white fill-white" strokeWidth={0} />
             </div>
             <span className="text-[17px] font-semibold tracking-tight">Riftvid</span>
-          </div>
+          </Link>
           <button onClick={onClose} className="lg:hidden p-1.5 rounded-lg hover:bg-white/[0.05] transition-colors" aria-label="Close sidebar">
             <X className="w-4 h-4 text-zinc-400" strokeWidth={2} />
           </button>
@@ -76,13 +97,13 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">Workspace</div>
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = activeItem === item.name;
+            const isActive = item.name === 'Home';
             return (
-              <button key={item.name} onClick={() => setActiveItem(item.name)} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] transition-all duration-200 ${isActive ? 'bg-white/[0.06] text-white shadow-sm' : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'}`}>
+              <Link key={item.name} href={item.href} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] transition-all duration-200 ${isActive ? 'bg-white/[0.06] text-white shadow-sm' : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'}`}>
                 <Icon className={`w-[18px] h-[18px] ${isActive ? 'text-purple-400' : ''}`} strokeWidth={1.75} />
                 <span className="font-medium">{item.name}</span>
                 {isActive && <span className="ml-auto w-1 h-1 rounded-full bg-purple-400" />}
-              </button>
+              </Link>
             );
           })}
         </nav>
@@ -201,10 +222,10 @@ function HeroCard({ onNewGeneration, totalJobs }: { onNewGeneration: () => void;
             <Upload className="w-4 h-4" strokeWidth={2.25} />
             New Generation
           </button>
-          <button className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-[#1f2937] hover:border-[#2d3748] text-white text-[13px] sm:text-[14px] font-semibold transition-all">
+          <Link href="/library" className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-[#1f2937] hover:border-[#2d3748] text-white text-[13px] sm:text-[14px] font-semibold transition-all">
             <Library className="w-4 h-4" strokeWidth={2} />
             My Library
-          </button>
+          </Link>
         </div>
       </div>
     </div>
@@ -251,21 +272,13 @@ function StatusBadge({ status, error }: { status: VideoStatus; error?: string | 
   );
 }
 
-// Real video card with thumbnail from source image
 function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () => void; onDelete: () => void }) {
   const [showMenu, setShowMenu] = useState(false);
   return (
     <div className="group cursor-pointer relative" onClick={onPlay}>
       <div className="relative aspect-video rounded-xl overflow-hidden border border-[#1f2937] bg-[#0a0a0b] lift">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={video.source_image_url}
-          alt={video.title || 'Video thumbnail'}
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = 'none';
-          }}
-        />
+        <img src={video.source_image_url} alt={video.title || 'Video thumbnail'} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors duration-300" />
         {video.status === 'completed' && (
@@ -286,22 +299,12 @@ function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () =
         <div className="absolute top-2.5 left-2.5">
           <StatusBadge status={video.status} error={video.error_message} />
         </div>
-        {/* Menu button */}
-        <button
-          onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
-          className="absolute top-2.5 right-2.5 p-1.5 rounded-md bg-black/40 backdrop-blur-md hover:bg-black/60 border border-white/5 transition-colors opacity-0 group-hover:opacity-100"
-        >
+        <button onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }} className="absolute top-2.5 right-2.5 p-1.5 rounded-md bg-black/40 backdrop-blur-md hover:bg-black/60 border border-white/5 transition-colors opacity-0 group-hover:opacity-100">
           <MoreVertical className="w-3.5 h-3.5 text-white" strokeWidth={2} />
         </button>
         {showMenu && (
-          <div
-            className="absolute top-10 right-2.5 z-10 rounded-lg bg-[#0a0a0b] border border-[#1f2937] shadow-2xl overflow-hidden min-w-[140px]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDelete(); }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-rose-300 hover:bg-rose-500/10 transition-colors"
-            >
+          <div className="absolute top-10 right-2.5 z-10 rounded-lg bg-[#0a0a0b] border border-[#1f2937] shadow-2xl overflow-hidden min-w-[140px]" onClick={(e) => e.stopPropagation()}>
+            <button onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDelete(); }} className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-rose-300 hover:bg-rose-500/10 transition-colors">
               <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
               Delete
             </button>
@@ -309,16 +312,13 @@ function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () =
         )}
       </div>
       <div className="mt-3 px-0.5">
-        <h4 className="text-[12px] sm:text-[13px] font-medium text-white truncate group-hover:text-purple-200 transition-colors">
-          {video.title || 'Untitled'}
-        </h4>
+        <h4 className="text-[12px] sm:text-[13px] font-medium text-white truncate group-hover:text-purple-200 transition-colors">{video.title || 'Untitled'}</h4>
         <p className="text-[11px] text-zinc-500 mt-0.5">{formatRelativeTime(video.created_at)}</p>
       </div>
     </div>
   );
 }
 
-// Video preview modal
 function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | null; onClose: () => void; onDownload: () => void }) {
   if (!video) return null;
   return (
@@ -391,26 +391,6 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-}
-
-// Mobile-friendly download via blob fetch
-async function downloadVideo(url: string, filename: string) {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('Download failed');
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-  } catch (err) {
-    // Fallback: open in new tab
-    window.open(url, '_blank');
-  }
 }
 
 function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boolean; onClose: () => void; onGenerationComplete: () => void }) {
@@ -574,7 +554,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
       if (data.status === 'completed' && data.videoUrl) {
         setGenMode('completed'); setGenProgress(100); setGeneratedVideoUrl(data.videoUrl);
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
-        onGenerationComplete(); // Refresh library
+        onGenerationComplete();
       } else if (data.status === 'processing') {
         setGenMode('processing'); setGenProgress(data.progress || 50);
         if (data.logs) setGenLogs(data.logs);
@@ -583,7 +563,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
       } else if (data.status === 'failed') {
         setGenMode('failed'); setGenError(data.error || 'Video generation failed');
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
-        onGenerationComplete(); // Refresh library to show failed state
+        onGenerationComplete();
       }
     } catch (err) { console.error('Polling error:', err); }
   };
@@ -594,14 +574,12 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
     setGenMode('submitting'); setGenProgress(0); setGenError(null); setGenLogs([]); setGeneratedVideoUrl(null);
 
     try {
-      // Get image as base64 or URL
       let sourceImageBase64: string | undefined;
       let sourceImageUrl: string | undefined;
       if (selectedFile) sourceImageBase64 = await fileToBase64(selectedFile);
       else if (previewUrl && previewUrl.startsWith('http')) sourceImageUrl = previewUrl;
       else throw new Error('Could not prepare image');
 
-      // Step 1: Create video record in DB + upload source image
       const createRes = await fetch('/api/videos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -620,13 +598,12 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
       const created = await createRes.json();
       if (!createRes.ok) throw new Error(created.error || 'Failed to create video record');
 
-      // Step 2: Submit to Fal via /api/generate-video with the videoId
       const genRes = await fetch('/api/generate-video', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           videoId: created.id,
           prompt: prompt.trim(),
-          imageUrl: created.source_image_url, // Use the Supabase URL now
+          imageUrl: created.source_image_url,
           duration,
         }),
       });
@@ -635,9 +612,8 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
       if (!genRes.ok) throw new Error(genData.error || 'Failed to start generation');
 
       setGenMode('queued'); setGenProgress(5);
-      onGenerationComplete(); // Refresh library to show queued video
+      onGenerationComplete();
 
-      // Start polling
       pollIntervalRef.current = setInterval(() => {
         pollVideoStatus(genData.requestId);
       }, 2000);
@@ -669,7 +645,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
         <div className="absolute -top-20 -left-20 w-64 h-64 rounded-full bg-purple-500/20 blur-[80px] opacity-50 pointer-events-none" />
 
         <div className="relative p-6 md:p-8">
-          {/* Header */}
           <div className="flex items-start justify-between mb-6">
             <div>
               <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-2">
@@ -697,7 +672,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
             </button>
           </div>
 
-          {/* COMPLETED */}
           {genMode === 'completed' && generatedVideoUrl && (
             <div className="mb-5">
               <div className="relative rounded-xl overflow-hidden border border-purple-500/30 bg-black">
@@ -710,7 +684,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
             </div>
           )}
 
-          {/* GENERATING */}
           {isGenerating && (
             <div className="mb-5">
               <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] p-6">
@@ -749,7 +722,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
             </div>
           )}
 
-          {/* FAILED */}
           {genMode === 'failed' && (
             <div className="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] p-5 text-center">
               <div className="text-[14px] font-medium text-rose-200 mb-1">Generation failed</div>
@@ -764,7 +736,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
             </div>
           )}
 
-          {/* IDLE / DONE */}
           {!isGenerating && genMode !== 'completed' && genMode !== 'failed' && (
             <>
               {(chatMode === 'idle' || chatMode === 'done') && (
@@ -1006,7 +977,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
             </>
           )}
 
-          {/* Footer */}
           <div className="flex items-center justify-between pt-4 border-t border-[#141821] gap-3">
             <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
               <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/50" strokeWidth={2} />
@@ -1080,11 +1050,8 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchVideos();
-  }, [fetchVideos]);
+  useEffect(() => { fetchVideos(); }, [fetchVideos]);
 
-  // Poll while there are processing videos
   useEffect(() => {
     const hasProcessing = videos.some((v) => v.status === 'queued' || v.status === 'processing');
     if (!hasProcessing) return;

@@ -1,46 +1,49 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useUser, UserButton } from '@clerk/nextjs';
 import {
   Home, FolderClosed, UserSquare2, Mic, Palette, BarChart3, Settings, HelpCircle,
   Search, Bell, Plus, Sparkles, Globe, UserPlus, Play, Upload, Zap, BarChart2,
   Link2, Wand2, X, Video, Library, ChevronRight, Menu, ArrowLeft, Loader2, Check,
-  RefreshCw, Eye, Download, Film, Clock, MessageCircle,
+  RefreshCw, Eye, Download, Film, Clock, MessageCircle, Trash2, MoreVertical,
 } from 'lucide-react';
 
-const mockUser = { plan: 'Pro', credits: 847, creditsMax: 1000, totalJobs: 12 };
+const mockUser = { plan: 'Pro', credits: 847, creditsMax: 1000 };
 
-type VideoStatus = 'Completed' | 'Rendering' | 'Draft' | 'Failed';
+type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
 interface VideoData {
   id: string;
-  title: string;
-  duration: string;
+  title: string | null;
+  duration: number;
   status: VideoStatus;
-  createdAt: string;
-  thumbnail: string;
-  progress?: number;
-  videoUrl?: string;
+  created_at: string;
+  source_image_url: string;
+  generated_video_url: string | null;
+  refined_prompt: string;
+  base_prompt: string | null;
+  scene_type: string | null;
+  rift_used: boolean;
+  error_message: string | null;
 }
 
-const mockVideos: VideoData[] = [
-  { id: '1', title: 'Q4 Product Launch Announcement', duration: '2:14', status: 'Completed', createdAt: '2 hours ago', thumbnail: 'purple-indigo' },
-  { id: '2', title: 'Onboarding Tutorial — Spanish', duration: '4:32', status: 'Rendering', createdAt: '12 min ago', thumbnail: 'blue-cyan', progress: 67 },
-  { id: '3', title: 'CEO Keynote — Digital Twin', duration: '8:45', status: 'Completed', createdAt: 'Yesterday', thumbnail: 'rose-purple' },
-  { id: '4', title: 'Weekly Team Update', duration: '1:47', status: 'Draft', createdAt: '3 days ago', thumbnail: 'emerald-teal' },
-];
+// Format date as relative time
+function formatRelativeTime(iso: string): string {
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  const diff = Math.floor((now - then) / 1000);
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hours ago`;
+  if (diff < 172800) return 'yesterday';
+  if (diff < 604800) return `${Math.floor(diff / 86400)} days ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
-const thumbnailGradients: Record<string, string> = {
-  'purple-indigo': 'from-purple-500/40 via-indigo-600/30 to-slate-900',
-  'blue-cyan': 'from-blue-500/40 via-cyan-600/30 to-slate-900',
-  'rose-purple': 'from-rose-500/40 via-purple-600/30 to-slate-900',
-  'emerald-teal': 'from-emerald-500/40 via-teal-600/30 to-slate-900',
-  'amber-rose': 'from-amber-500/40 via-rose-600/30 to-slate-900',
-  'indigo-blue': 'from-indigo-500/40 via-blue-600/30 to-slate-900',
-  'slate-zinc': 'from-slate-600/40 via-zinc-700/30 to-slate-900',
-  'violet-fuchsia': 'from-violet-500/40 via-fuchsia-600/30 to-slate-900',
-};
+function formatDuration(seconds: number): string {
+  return `0:${seconds.toString().padStart(2, '0')}`;
+}
 
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [activeItem, setActiveItem] = useState('Home');
@@ -154,7 +157,7 @@ function Topbar({ onNewGeneration, onToggleSidebar }: { onNewGeneration: () => v
   );
 }
 
-function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
+function HeroCard({ onNewGeneration, totalJobs }: { onNewGeneration: () => void; totalJobs: number }) {
   const { user } = useUser();
   const displayName = user?.firstName || user?.username || 'Creator';
   return (
@@ -179,7 +182,7 @@ function HeroCard({ onNewGeneration }: { onNewGeneration: () => void }) {
               <BarChart2 className="w-4 h-4 text-purple-300" strokeWidth={2} />
             </div>
             <div>
-              <div className="text-[18px] font-semibold text-white leading-none">{mockUser.totalJobs}</div>
+              <div className="text-[18px] font-semibold text-white leading-none">{totalJobs}</div>
               <div className="text-[11px] text-zinc-500 mt-0.5">Total jobs</div>
             </div>
           </div>
@@ -233,41 +236,137 @@ function ToolCard({ title, description, icon, gradient, tag, tagColor, badge, ct
   );
 }
 
-function VideoCard({ video }: { video: VideoData }) {
+function StatusBadge({ status, error }: { status: VideoStatus; error?: string | null }) {
+  const config = {
+    queued: { label: 'Queued', className: 'bg-zinc-500/15 text-zinc-300 border-zinc-500/20', dot: 'bg-zinc-400', pulse: false },
+    processing: { label: 'Rendering', className: 'bg-purple-500/15 text-purple-200 border-purple-500/25', dot: 'bg-purple-400', pulse: true },
+    completed: { label: 'Completed', className: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20', dot: 'bg-emerald-400', pulse: false },
+    failed: { label: 'Failed', className: 'bg-rose-500/15 text-rose-300 border-rose-500/20', dot: 'bg-rose-400', pulse: false },
+  }[status];
   return (
-    <div className="group cursor-pointer">
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold backdrop-blur-md border ${config.className}`} title={error || undefined}>
+      <span className={`w-1.5 h-1.5 rounded-full ${config.dot} ${config.pulse ? 'pulse-dot' : ''}`} />
+      {config.label}
+    </span>
+  );
+}
+
+// Real video card with thumbnail from source image
+function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () => void; onDelete: () => void }) {
+  const [showMenu, setShowMenu] = useState(false);
+  return (
+    <div className="group cursor-pointer relative" onClick={onPlay}>
       <div className="relative aspect-video rounded-xl overflow-hidden border border-[#1f2937] bg-[#0a0a0b] lift">
-        <div className={`absolute inset-0 bg-gradient-to-br ${thumbnailGradients[video.thumbnail]}`} />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={video.source_image_url}
+          alt={video.title || 'Video thumbnail'}
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.display = 'none';
+          }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors duration-300" />
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
-          <div className="w-12 h-12 rounded-full glass-strong flex items-center justify-center shadow-xl scale-90 group-hover:scale-100 transition-transform duration-300">
-            <Play className="w-4 h-4 text-white fill-white ml-0.5" strokeWidth={0} />
+        {video.status === 'completed' && (
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300">
+            <div className="w-12 h-12 rounded-full glass-strong flex items-center justify-center shadow-xl scale-90 group-hover:scale-100 transition-transform duration-300">
+              <Play className="w-4 h-4 text-white fill-white ml-0.5" strokeWidth={0} />
+            </div>
           </div>
+        )}
+        {video.status === 'processing' && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-purple-300 animate-spin" strokeWidth={2} />
+          </div>
+        )}
+        <div className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[11px] font-medium text-white border border-white/5">
+          {formatDuration(video.duration)}
         </div>
-        <div className="absolute bottom-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[11px] font-medium text-white border border-white/5">{video.duration}</div>
-        <div className="absolute top-2.5 left-2.5"><StatusBadge status={video.status} progress={video.progress} /></div>
+        <div className="absolute top-2.5 left-2.5">
+          <StatusBadge status={video.status} error={video.error_message} />
+        </div>
+        {/* Menu button */}
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowMenu(!showMenu); }}
+          className="absolute top-2.5 right-2.5 p-1.5 rounded-md bg-black/40 backdrop-blur-md hover:bg-black/60 border border-white/5 transition-colors opacity-0 group-hover:opacity-100"
+        >
+          <MoreVertical className="w-3.5 h-3.5 text-white" strokeWidth={2} />
+        </button>
+        {showMenu && (
+          <div
+            className="absolute top-10 right-2.5 z-10 rounded-lg bg-[#0a0a0b] border border-[#1f2937] shadow-2xl overflow-hidden min-w-[140px]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowMenu(false); onDelete(); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-rose-300 hover:bg-rose-500/10 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" strokeWidth={2} />
+              Delete
+            </button>
+          </div>
+        )}
       </div>
       <div className="mt-3 px-0.5">
-        <h4 className="text-[12px] sm:text-[13px] font-medium text-white truncate group-hover:text-purple-200 transition-colors">{video.title}</h4>
-        <p className="text-[11px] text-zinc-500 mt-0.5">{video.createdAt}</p>
+        <h4 className="text-[12px] sm:text-[13px] font-medium text-white truncate group-hover:text-purple-200 transition-colors">
+          {video.title || 'Untitled'}
+        </h4>
+        <p className="text-[11px] text-zinc-500 mt-0.5">{formatRelativeTime(video.created_at)}</p>
       </div>
     </div>
   );
 }
 
-function StatusBadge({ status, progress }: { status: VideoStatus; progress?: number }) {
-  const config = {
-    Completed: { className: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20', dot: 'bg-emerald-400', pulse: false },
-    Rendering: { className: 'bg-purple-500/15 text-purple-200 border-purple-500/25', dot: 'bg-purple-400', pulse: true },
-    Draft: { className: 'bg-zinc-500/15 text-zinc-300 border-zinc-500/20', dot: 'bg-zinc-400', pulse: false },
-    Failed: { className: 'bg-rose-500/15 text-rose-300 border-rose-500/20', dot: 'bg-rose-400', pulse: false },
-  }[status];
+// Video preview modal
+function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | null; onClose: () => void; onDownload: () => void }) {
+  if (!video) return null;
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold backdrop-blur-md border ${config.className}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${config.dot} ${config.pulse ? 'pulse-dot' : ''}`} />
-      {status}
-      {status === 'Rendering' && progress !== undefined && ` ${progress}%`}
-    </span>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-[fade-in_0.2s_ease-out]" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
+      <div className="relative w-full max-w-3xl rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#141821]">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[14px] font-semibold text-white truncate">{video.title || 'Untitled'}</h3>
+            <p className="text-[11px] text-zinc-500 mt-0.5">{formatRelativeTime(video.created_at)} · {video.duration}s</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {video.generated_video_url && (
+              <button onClick={onDownload} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-[12px] font-medium transition-all">
+                <Download className="w-3.5 h-3.5" strokeWidth={2} />
+                Download
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/[0.05] transition-colors">
+              <X className="w-4 h-4 text-zinc-400" strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+        {video.generated_video_url ? (
+          <video src={video.generated_video_url} controls autoPlay loop className="w-full aspect-video bg-black">Your browser does not support video playback.</video>
+        ) : video.status === 'failed' ? (
+          <div className="aspect-video bg-rose-500/[0.04] flex flex-col items-center justify-center gap-2 px-5 text-center">
+            <div className="text-[14px] font-medium text-rose-200">Generation failed</div>
+            <div className="text-[12px] text-zinc-400 max-w-md">{video.error_message || 'Unknown error'}</div>
+          </div>
+        ) : (
+          <div className="aspect-video bg-purple-500/[0.04] flex flex-col items-center justify-center gap-3">
+            <Loader2 className="w-8 h-8 text-purple-300 animate-spin" strokeWidth={2} />
+            <div className="text-[13px] text-zinc-400">Still rendering...</div>
+          </div>
+        )}
+        <div className="px-5 py-4 border-t border-[#141821]">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500 mb-1">Prompt</div>
+          <div className="text-[13px] text-zinc-300 leading-relaxed">{video.refined_prompt}</div>
+          {video.scene_type && (
+            <div className="mt-3 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] font-medium text-purple-300">
+              <Sparkles className="w-2.5 h-2.5" strokeWidth={2} />
+              {video.scene_type}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -294,7 +393,27 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+// Mobile-friendly download via blob fetch
+async function downloadVideo(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Download failed');
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  } catch (err) {
+    // Fallback: open in new tab
+    window.open(url, '_blank');
+  }
+}
+
+function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boolean; onClose: () => void; onGenerationComplete: () => void }) {
   const [useUrl, setUseUrl] = useState(false);
   const [aiOptimization, setAiOptimization] = useState(true);
   const [prompt, setPrompt] = useState('');
@@ -323,7 +442,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
   const [genLogs, setGenLogs] = useState<string[]>([]);
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
-  const [requestId, setRequestId] = useState<string | null>(null);
 
   const customInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -346,7 +464,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     setTotalSteps(4); setImageDescription(null); setSceneAcknowledgment(null); setFinalAcknowledgment(null);
     setCustomAnswer(''); setShowCustomInput(false); setError(null); setPrompt('');
     handleRemoveFile(); setImageUrl(''); setFileError(null); setDuration(5);
-    setGenMode('idle'); setGenProgress(0); setGenLogs([]); setGeneratedVideoUrl(null); setGenError(null); setRequestId(null);
+    setGenMode('idle'); setGenProgress(0); setGenLogs([]); setGeneratedVideoUrl(null); setGenError(null);
     onClose();
   };
 
@@ -456,6 +574,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
       if (data.status === 'completed' && data.videoUrl) {
         setGenMode('completed'); setGenProgress(100); setGeneratedVideoUrl(data.videoUrl);
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+        onGenerationComplete(); // Refresh library
       } else if (data.status === 'processing') {
         setGenMode('processing'); setGenProgress(data.progress || 50);
         if (data.logs) setGenLogs(data.logs);
@@ -464,6 +583,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
       } else if (data.status === 'failed') {
         setGenMode('failed'); setGenError(data.error || 'Video generation failed');
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+        onGenerationComplete(); // Refresh library to show failed state
       }
     } catch (err) { console.error('Polling error:', err); }
   };
@@ -472,36 +592,74 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
     if (!prompt.trim()) { setGenError('Please type or generate a prompt first'); return; }
     if (!selectedFile && !previewUrl) { setGenError('Please upload an image first'); return; }
     setGenMode('submitting'); setGenProgress(0); setGenError(null); setGenLogs([]); setGeneratedVideoUrl(null);
+
     try {
-      let finalImageUrl: string;
-      if (selectedFile) finalImageUrl = await fileToBase64(selectedFile);
-      else if (previewUrl && previewUrl.startsWith('http')) finalImageUrl = previewUrl;
+      // Get image as base64 or URL
+      let sourceImageBase64: string | undefined;
+      let sourceImageUrl: string | undefined;
+      if (selectedFile) sourceImageBase64 = await fileToBase64(selectedFile);
+      else if (previewUrl && previewUrl.startsWith('http')) sourceImageUrl = previewUrl;
       else throw new Error('Could not prepare image');
-      const res = await fetch('/api/generate-video', {
+
+      // Step 1: Create video record in DB + upload source image
+      const createRes = await fetch('/api/videos', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim(), imageUrl: finalImageUrl, duration }),
+        body: JSON.stringify({
+          basePrompt: basePrompt || null,
+          refinedPrompt: prompt.trim(),
+          riftUsed: aiOptimization,
+          riftAnswers: answers.length > 0 ? answers : null,
+          sceneType: imageDescription ? 'detected' : null,
+          sceneDescription: imageDescription,
+          duration,
+          sourceImageBase64,
+          sourceImageUrl,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to start generation');
-      setRequestId(data.requestId); setGenMode('queued'); setGenProgress(5);
-      pollIntervalRef.current = setInterval(() => { pollVideoStatus(data.requestId); }, 2000);
+
+      const created = await createRes.json();
+      if (!createRes.ok) throw new Error(created.error || 'Failed to create video record');
+
+      // Step 2: Submit to Fal via /api/generate-video with the videoId
+      const genRes = await fetch('/api/generate-video', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoId: created.id,
+          prompt: prompt.trim(),
+          imageUrl: created.source_image_url, // Use the Supabase URL now
+          duration,
+        }),
+      });
+
+      const genData = await genRes.json();
+      if (!genRes.ok) throw new Error(genData.error || 'Failed to start generation');
+
+      setGenMode('queued'); setGenProgress(5);
+      onGenerationComplete(); // Refresh library to show queued video
+
+      // Start polling
+      pollIntervalRef.current = setInterval(() => {
+        pollVideoStatus(genData.requestId);
+      }, 2000);
     } catch (err) {
       setGenMode('failed');
       setGenError(err instanceof Error ? err.message : 'Generation failed');
     }
   };
 
-  const handleDownloadVideo = () => { if (generatedVideoUrl) window.open(generatedVideoUrl, '_blank'); };
+  const handleDownloadGenerated = () => {
+    if (generatedVideoUrl) {
+      downloadVideo(generatedVideoUrl, `riftvid-${Date.now()}.mp4`);
+    }
+  };
 
   const handleCreateAnother = () => {
     if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
-    setGenMode('idle'); setGenProgress(0); setGenLogs([]); setGeneratedVideoUrl(null); setGenError(null); setRequestId(null);
+    setGenMode('idle'); setGenProgress(0); setGenLogs([]); setGeneratedVideoUrl(null); setGenError(null);
     setChatMode('idle'); setPrompt(''); handleRemoveFile();
   };
 
   const isGenerating = ['submitting', 'queued', 'processing'].includes(genMode);
-
-  // Guard: enable Generate Video button only when prompt + image are present
   const canGenerate = prompt.trim().length > 0 && (selectedFile !== null || previewUrl !== null);
 
   return (
@@ -518,7 +676,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                 <Sparkles className="w-2.5 h-2.5" strokeWidth={2.5} />
                 {genMode === 'completed' ? '🎬 Video Ready' :
                   isGenerating ? `Rendering · ${genProgress}%` :
-                  chatMode === 'asking' || chatMode === 'refining' ? `Talking with Rift` :
+                  chatMode === 'asking' || chatMode === 'refining' ? 'Talking with Rift' :
                   chatMode === 'done' ? 'Refined Prompt Ready' :
                   chatMode === 'error' ? 'Connection Issue' : 'New Generation'}
               </div>
@@ -528,7 +686,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                   chatMode === 'done' ? 'Review your prompt' : 'Create a new video'}
               </h2>
               <p className="text-[13px] text-zinc-400 mt-1">
-                {genMode === 'completed' ? 'Watch, download, or create another.' :
+                {genMode === 'completed' ? 'Watch, download, or create another. Saved to your library.' :
                   isGenerating ? 'AI is rendering your scene. This takes 30-90 seconds.' :
                   chatMode === 'done' ? 'You can edit the prompt below before generating.' :
                   'Upload an image and describe the motion you want.'}
@@ -539,7 +697,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             </button>
           </div>
 
-          {/* COMPLETED STATE */}
+          {/* COMPLETED */}
           {genMode === 'completed' && generatedVideoUrl && (
             <div className="mb-5">
               <div className="relative rounded-xl overflow-hidden border border-purple-500/30 bg-black">
@@ -547,12 +705,12 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
               </div>
               <div className="mt-3 flex items-center gap-2 text-[12px] text-zinc-400">
                 <Check className="w-3.5 h-3.5 text-emerald-400" strokeWidth={2.5} />
-                <span>{duration}s video · Generated by Kling 2.5 Turbo Pro</span>
+                <span>{duration}s · Saved to your library</span>
               </div>
             </div>
           )}
 
-          {/* GENERATING STATE */}
+          {/* GENERATING */}
           {isGenerating && (
             <div className="mb-5">
               <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] p-6">
@@ -562,10 +720,10 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                   </div>
                   <div className="flex-1">
                     <div className="text-[14px] font-semibold text-white mb-0.5">
-                      {genMode === 'submitting' ? 'Submitting to Rift...' : genMode === 'queued' ? 'In queue...' : 'Rendering your scene...'}
+                      {genMode === 'submitting' ? 'Saving and submitting...' : genMode === 'queued' ? 'In queue...' : 'Rendering your scene...'}
                     </div>
                     <div className="text-[11px] text-zinc-400">
-                      {genMode === 'submitting' ? 'Just a moment' : genMode === 'queued' ? 'Almost there, AI is starting up' : 'AI is creating frame by frame'}
+                      {genMode === 'submitting' ? 'Just a moment' : genMode === 'queued' ? 'Almost there' : 'AI is creating frame by frame'}
                     </div>
                   </div>
                   <div className="text-[20px] font-bold text-purple-300 tabular-nums">{genProgress}%</div>
@@ -585,13 +743,13 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                 )}
                 <div className="mt-4 flex items-center gap-1.5 text-[11px] text-zinc-500">
                   <Clock className="w-3 h-3" strokeWidth={2} />
-                  <span>Total time: ~{duration === 5 ? '45' : '75'} seconds</span>
+                  <span>Total time: ~{duration === 5 ? '45' : '75'} seconds. Saved to library when done.</span>
                 </div>
               </div>
             </div>
           )}
 
-          {/* FAILED STATE */}
+          {/* FAILED */}
           {genMode === 'failed' && (
             <div className="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] p-5 text-center">
               <div className="text-[14px] font-medium text-rose-200 mb-1">Generation failed</div>
@@ -606,10 +764,9 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           )}
 
-          {/* IDLE / DONE main UI */}
+          {/* IDLE / DONE */}
           {!isGenerating && genMode !== 'completed' && genMode !== 'failed' && (
             <>
-              {/* Upload */}
               {(chatMode === 'idle' || chatMode === 'done') && (
                 <div className="mb-5">
                   <label className="block text-[12px] font-medium text-zinc-300 mb-2">Upload Media</label>
@@ -664,7 +821,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                 </div>
               )}
 
-              {/* Prompt textarea / chat UI */}
               <div className="mb-5">
                 <div className="flex items-center justify-between mb-2">
                   <label className="block text-[12px] font-medium text-zinc-300">
@@ -783,7 +939,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                 )}
               </div>
 
-              {/* Duration */}
               {(chatMode === 'idle' || chatMode === 'done') && (
                 <div className="mb-5">
                   <label className="block text-[12px] font-medium text-zinc-300 mb-2">Video Length</label>
@@ -826,7 +981,6 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
                 </div>
               )}
 
-              {/* Rift toggle */}
               {chatMode === 'idle' && (
                 <div className={`relative rounded-xl border p-4 mb-5 transition-all ${aiOptimization ? 'border-purple-500/30 bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.03]' : 'border-[#1f2937] bg-white/[0.02]'}`}>
                   {aiOptimization && <div className="absolute -inset-px rounded-xl bg-gradient-to-r from-purple-500/20 via-purple-400/10 to-blue-500/20 blur-sm opacity-60 pointer-events-none" />}
@@ -862,11 +1016,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
               {chatMode === 'idle' && genMode === 'idle' && (
                 <>
                   <button onClick={handleClose} className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">Cancel</button>
-                  <button
-                    onClick={aiOptimization ? handleStartRift : handleGenerate}
-                    disabled={aiOptimization ? !prompt.trim() : !canGenerate}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
+                  <button onClick={aiOptimization ? handleStartRift : handleGenerate} disabled={aiOptimization ? !prompt.trim() : !canGenerate} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                     <Wand2 className="w-3.5 h-3.5" strokeWidth={2.25} />
                     {aiOptimization ? 'Generate with Rift' : 'Generate Video'}
                   </button>
@@ -892,7 +1042,7 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
               )}
               {genMode === 'completed' && (
                 <>
-                  <button onClick={handleDownloadVideo} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-white text-[13px] font-medium transition-all">
+                  <button onClick={handleDownloadGenerated} className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-white text-[13px] font-medium transition-all">
                     <Download className="w-3.5 h-3.5" strokeWidth={2} />
                     Download
                   </button>
@@ -913,6 +1063,34 @@ function NewGenerationModal({ open, onClose }: { open: boolean; onClose: () => v
 export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [videos, setVideos] = useState<VideoData[]>([]);
+  const [videosLoading, setVideosLoading] = useState(true);
+  const [previewVideo, setPreviewVideo] = useState<VideoData | null>(null);
+
+  const fetchVideos = useCallback(async () => {
+    try {
+      const res = await fetch('/api/videos');
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      setVideos(data.videos || []);
+    } catch (err) {
+      console.error('Fetch videos error:', err);
+    } finally {
+      setVideosLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchVideos();
+  }, [fetchVideos]);
+
+  // Poll while there are processing videos
+  useEffect(() => {
+    const hasProcessing = videos.some((v) => v.status === 'queued' || v.status === 'processing');
+    if (!hasProcessing) return;
+    const interval = setInterval(fetchVideos, 5000);
+    return () => clearInterval(interval);
+  }, [videos, fetchVideos]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(min-width: 1024px)');
@@ -930,13 +1108,33 @@ export default function Dashboard() {
     return () => window.removeEventListener('keydown', handleEscape);
   }, [sidebarOpen]);
 
+  const handleDeleteVideo = async (id: string) => {
+    if (!confirm('Delete this video? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`/api/videos/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+      setVideos((prev) => prev.filter((v) => v.id !== id));
+      if (previewVideo?.id === id) setPreviewVideo(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to delete');
+    }
+  };
+
+  const handleDownloadFromPreview = () => {
+    if (previewVideo?.generated_video_url) {
+      downloadVideo(previewVideo.generated_video_url, `${previewVideo.title || 'riftvid'}.mp4`);
+    }
+  };
+
+  const recentVideos = videos.slice(0, 4);
+
   return (
     <div className="min-h-screen bg-[#050505] text-white relative">
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       <main className="lg:ml-64 relative z-[1]">
         <Topbar onNewGeneration={() => setModalOpen(true)} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
-          <section className="mb-8"><HeroCard onNewGeneration={() => setModalOpen(true)} /></section>
+          <section className="mb-8"><HeroCard onNewGeneration={() => setModalOpen(true)} totalJobs={videos.length} /></section>
           <section className="mb-10 sm:mb-12">
             <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider mb-4">Studio Tools</h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -950,22 +1148,50 @@ export default function Dashboard() {
             <div className="flex items-center justify-between mb-5 gap-2">
               <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider">Recent Projects</h2>
               <div className="flex items-center gap-2">
-                <div className="hidden sm:flex items-center gap-1 p-0.5 rounded-lg bg-white/[0.03] border border-[#1f2937]">
-                  <button className="px-2.5 py-1 text-[12px] rounded-md bg-white/[0.06] text-white font-medium">All</button>
-                  <button className="px-2.5 py-1 text-[12px] rounded-md text-zinc-400 hover:text-white transition-colors">Completed</button>
-                  <button className="px-2.5 py-1 text-[12px] rounded-md text-zinc-400 hover:text-white transition-colors">Drafts</button>
-                </div>
-                <button className="text-[12px] text-zinc-400 hover:text-white transition-colors font-medium whitespace-nowrap">View all →</button>
+                <button onClick={fetchVideos} className="flex items-center gap-1 text-[12px] text-zinc-400 hover:text-white transition-colors font-medium">
+                  <RefreshCw className="w-3.5 h-3.5" strokeWidth={2} />
+                  Refresh
+                </button>
               </div>
             </div>
-            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
-              {mockVideos.slice(0, 4).map((video) => <VideoCard key={video.id} video={video} />)}
-            </div>
+
+            {videosLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Loader2 className="w-8 h-8 text-purple-400 animate-spin mb-3" strokeWidth={2} />
+                <div className="text-[13px] text-zinc-400">Loading your library...</div>
+              </div>
+            ) : recentVideos.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[#1f2937] bg-white/[0.01] p-12 text-center">
+                <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-4 mx-auto">
+                  <Film className="w-7 h-7 text-purple-300" strokeWidth={1.75} />
+                </div>
+                <h3 className="text-[16px] font-semibold text-white mb-1">No videos yet</h3>
+                <p className="text-[13px] text-zinc-400 mb-5 max-w-md mx-auto">
+                  Create your first AI-generated video. Upload an image, describe the motion, and watch it come alive.
+                </p>
+                <button onClick={() => setModalOpen(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all">
+                  <Sparkles className="w-3.5 h-3.5" strokeWidth={2.25} />
+                  Create your first video
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
+                {recentVideos.map((video) => (
+                  <VideoCard
+                    key={video.id}
+                    video={video}
+                    onPlay={() => setPreviewVideo(video)}
+                    onDelete={() => handleDeleteVideo(video.id)}
+                  />
+                ))}
+              </div>
+            )}
           </section>
           <div className="h-16" />
         </div>
       </main>
-      <NewGenerationModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      <NewGenerationModal open={modalOpen} onClose={() => setModalOpen(false)} onGenerationComplete={fetchVideos} />
+      <VideoPreviewModal video={previewVideo} onClose={() => setPreviewVideo(null)} onDownload={handleDownloadFromPreview} />
     </div>
   );
 }

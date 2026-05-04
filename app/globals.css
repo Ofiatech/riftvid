@@ -2,78 +2,257 @@
 
 :root {
   --background: #050505;
-  --surface: #0a0a0b;
-  --surface-elevated: #101013;
-  --border: #1f2937;
-  --border-subtle: #141821;
-  --text-primary: #f5f5f7;
-  --text-secondary: #a1a1aa;
-  --text-muted: #6b7280;
-  --accent-purple: #8b5cf6;
-  --accent-blue: #3b82f6;
+  --foreground: #ededed;
 }
 
-* {
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-html {
-  color-scheme: dark;
+/* ============================================================
+ * GLOBAL UTILITIES (kept from before — don't remove)
+ * ============================================================ */
+
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-html,
-body {
-  background-color: var(--background);
-  color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
-  letter-spacing: -0.01em;
-  min-height: 100vh;
-  overflow-x: hidden;
+.glass-strong {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-::selection {
-  background: rgba(139, 92, 246, 0.3);
-  color: #ffffff;
+.grain {
+  position: relative;
 }
 
-/* Ambient background glows */
-body::before {
-  content: '';
-  position: fixed;
-  top: -20%;
-  left: 30%;
-  width: 60%;
-  height: 60%;
-  background: radial-gradient(
-    circle,
-    rgba(139, 92, 246, 0.08) 0%,
-    rgba(59, 130, 246, 0.04) 35%,
-    transparent 70%
-  );
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.015;
   pointer-events: none;
-  z-index: 0;
-  filter: blur(80px);
+  mix-blend-mode: overlay;
 }
 
-body::after {
-  content: '';
-  position: fixed;
-  bottom: -10%;
-  right: -10%;
-  width: 50%;
-  height: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(59, 130, 246, 0.06) 0%,
-    transparent 70%
-  );
-  pointer-events: none;
-  z-index: 0;
-  filter: blur(100px);
+/* ============================================================
+ * APPLE-STYLE EASING CURVES
+ * ============================================================ */
+
+/* Apple's signature easing — used in iOS sheets, modals, transitions */
+.ease-apple {
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Custom scrollbar */
+.ease-apple-out {
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ============================================================
+ * MODAL ANIMATIONS (Apple-style smooth)
+ * ============================================================ */
+
+/* Backdrop blur fades in smoothly, no instant flash */
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+}
+
+@keyframes backdrop-out {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
+  }
+}
+
+/* Modal slides up + fades in + subtle scale */
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes modal-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+}
+
+.animate-backdrop-in {
+  animation: backdrop-in 350ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-modal-in {
+  animation: modal-in 380ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ============================================================
+ * FADE IN (general purpose)
+ * ============================================================ */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-up {
+  animation: fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ============================================================
+ * STAGGERED LIBRARY ENTRY (cards appear one-by-one)
+ * ============================================================ */
+
+@keyframes card-stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.card-stagger {
+  opacity: 0;
+  animation: card-stagger-in 500ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.card-stagger:nth-child(1) { animation-delay: 0ms; }
+.card-stagger:nth-child(2) { animation-delay: 60ms; }
+.card-stagger:nth-child(3) { animation-delay: 120ms; }
+.card-stagger:nth-child(4) { animation-delay: 180ms; }
+.card-stagger:nth-child(5) { animation-delay: 240ms; }
+.card-stagger:nth-child(6) { animation-delay: 300ms; }
+.card-stagger:nth-child(7) { animation-delay: 360ms; }
+.card-stagger:nth-child(8) { animation-delay: 420ms; }
+.card-stagger:nth-child(n+9) { animation-delay: 480ms; }
+
+/* ============================================================
+ * VIDEO CARD HOVER LIFT (smooth, premium)
+ * ============================================================ */
+
+.lift {
+  transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 400ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+
+.lift:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 40px -10px rgba(168, 85, 247, 0.15),
+    0 8px 16px -4px rgba(0, 0, 0, 0.3);
+}
+
+/* Active state — tap feedback for mobile */
+.lift:active {
+  transform: translateY(-2px) scale(0.99);
+  transition-duration: 150ms;
+}
+
+/* ============================================================
+ * BUTTON PRESS FEEDBACK (subtle scale on tap)
+ * ============================================================ */
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 100ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+button {
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+
+/* ============================================================
+ * STATUS BADGE PULSE (only for active rendering)
+ * ============================================================ */
+
+@keyframes pulse-dot {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.2);
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ============================================================
+ * REDUCED MOTION (accessibility — respect user preferences)
+ * ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .lift:hover {
+    transform: none;
+  }
+}
+
+/* ============================================================
+ * SCROLLBAR (subtle, premium)
+ * ============================================================ */
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -84,75 +263,11 @@ body::after {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1f2937;
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 4px;
+  transition: background 200ms ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2d3748;
-}
-
-@layer utilities {
-  .glass {
-    background: rgba(16, 16, 19, 0.6);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .glass-strong {
-    background: rgba(10, 10, 11, 0.8);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-  }
-
-  .grain {
-    position: relative;
-  }
-
-  .grain::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
-    opacity: 0.03;
-    pointer-events: none;
-    mix-blend-mode: overlay;
-    border-radius: inherit;
-  }
-
-  .lift {
-    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
-      border-color 0.3s ease, box-shadow 0.3s ease;
-  }
-
-  .lift:hover {
-    transform: translateY(-2px);
-  }
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.85); }
-}
-
-@keyframes fade-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.pulse-dot {
-  animation: pulse-dot 1.6s ease-in-out infinite;
-}
-
-.fade-up {
-  animation: fade-up 0.5s ease-out forwards;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
+  background: rgba(168, 85, 247, 0.3);
 }

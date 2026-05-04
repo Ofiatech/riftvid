@@ -67,7 +67,6 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { user } = useUser();
   const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
 
-  // Active item is "Home" since this is the home page
   const navItems = [
     { name: 'Home', icon: Home, href: '/' },
     { name: 'Projects', icon: FolderClosed, href: '/library' },
@@ -81,7 +80,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <>
       <div onClick={onClose} className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} aria-hidden="true" />
-      <aside className={`fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/95 backdrop-blur-xl z-40 flex flex-col transition-transform duration-300 ease-out ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
+      <aside className={`fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/95 backdrop-blur-xl z-40 flex flex-col transition-transform duration-300 ease-apple ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
         <div className="px-6 pt-6 pb-8 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
@@ -275,7 +274,7 @@ function StatusBadge({ status, error }: { status: VideoStatus; error?: string | 
 function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () => void; onDelete: () => void }) {
   const [showMenu, setShowMenu] = useState(false);
   return (
-    <div className="group cursor-pointer relative" onClick={onPlay}>
+    <div className="group cursor-pointer relative card-stagger" onClick={onPlay}>
       <div className="relative aspect-video rounded-xl overflow-hidden border border-[#1f2937] bg-[#0a0a0b] lift">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={video.source_image_url} alt={video.title || 'Video thumbnail'} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -322,9 +321,9 @@ function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () =
 function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | null; onClose: () => void; onDownload: () => void }) {
   if (!video) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-[fade-in_0.2s_ease-out]" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-      <div className="relative w-full max-w-3xl rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/80 animate-backdrop-in" />
+      <div className="relative w-full max-w-3xl rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl overflow-hidden animate-modal-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#141821]">
           <div className="min-w-0 flex-1">
             <h3 className="text-[14px] font-semibold text-white truncate">{video.title || 'Untitled'}</h3>
@@ -639,9 +638,9 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
   const canGenerate = prompt.trim().length > 0 && (selectedFile !== null || previewUrl !== null);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-[fade-in_0.2s_ease-out]" onClick={handleClose}>
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleClose}>
+      <div className="absolute inset-0 bg-black/70 animate-backdrop-in" />
+      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl animate-modal-in" onClick={(e) => e.stopPropagation()}>
         <div className="absolute -top-20 -left-20 w-64 h-64 rounded-full bg-purple-500/20 blur-[80px] opacity-50 pointer-events-none" />
 
         <div className="relative p-6 md:p-8">
@@ -834,7 +833,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
                 {chatMode === 'asking' && currentQuestion && (
                   <div className="space-y-3">
                     {step === 0 && sceneAcknowledgment && (
-                      <div className="flex items-start gap-3 p-4 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/25 animate-[fade-in_0.4s_ease-out]">
+                      <div className="flex items-start gap-3 p-4 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/25">
                         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
                           <Eye className="w-4 h-4 text-white" strokeWidth={2} />
                         </div>
@@ -845,14 +844,14 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
                       </div>
                     )}
                     {step > 0 && currentQuestion.acknowledgmentBeforeQuestion && (
-                      <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05] animate-[fade-in_0.3s_ease-out]">
+                      <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.05]">
                         <div className="w-6 h-6 rounded-md bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0 mt-0.5">
                           <Check className="w-3 h-3 text-purple-300" strokeWidth={2.5} />
                         </div>
                         <div className="text-[13px] text-zinc-300 leading-relaxed italic">{currentQuestion.acknowledgmentBeforeQuestion}</div>
                       </div>
                     )}
-                    <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5 animate-[fade-in_0.3s_ease-out]">
+                    <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5">
                       <div className="flex items-start gap-3 mb-4">
                         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
                           <Sparkles className="w-4 h-4 text-white" strokeWidth={2} />

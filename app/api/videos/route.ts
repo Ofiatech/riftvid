@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
 import { CreateVideoRequest, generateTitleFromPrompt } from '@/lib/types';
+import { hasEnoughCredits, deductCredits, getCreditCost } from '@/lib/credits';
 
 export const maxDuration = 30;
 
@@ -13,7 +14,6 @@ async function uploadBase64Image(
 ): Promise<string> {
   const supabase = getSupabaseAdmin();
 
-  // Parse data URL: "data:image/png;base64,xxxxx..."
   const match = base64DataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
   if (!match) throw new Error('Invalid base64 image format');
 
@@ -32,7 +32,6 @@ async function uploadBase64Image(
 
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
 
-  // Get public URL
   const { data: urlData } = supabase.storage
     .from('source-images')
     .getPublicUrl(fileName);
@@ -40,7 +39,7 @@ async function uploadBase64Image(
   return urlData.publicUrl;
 }
 
-// POST /api/videos — create a new video record (called when user clicks Generate)
+// POST /api/videos — create new video record + deduct credits
 export async function POST(req: NextRequest) {
   try {
     const { userId } = await auth();
@@ -72,9 +71,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Source image is required' }, { status: 400 });
     }
 
+    // Check credits BEFORE doing any work
+    const creditCost = getCreditCost(duration);
+    const creditCheck = await hasEnoughCredits(userId, creditCost);
+
+    if (!creditCheck.hasEnough) {
+      return NextResponse.json(
+        {
+          error: 'Insufficient credits',
+          credits_required: creditCost,
+          credits_available: creditCheck.balance,
+          out_of_credits: true,
+        },
+        { status: 402 } // 402 Payment Required
+      );
+    }
+
     const supabase = getSupabaseAdmin();
 
-    // Step 1: Insert video record (status: queued, no URLs yet)
+    // Step 1: Insert video record
     const { data: video, error: insertError } = await supabase
       .from('videos')
       .insert({
@@ -86,7 +101,7 @@ export async function POST(req: NextRequest) {
         scene_type: sceneType || null,
         scene_description: sceneDescription || null,
         duration,
-        source_image_url: 'pending', // placeholder until upload completes
+        source_image_url: 'pending',
         status: 'queued',
         title: generateTitleFromPrompt(refinedPrompt),
       })
@@ -101,7 +116,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Step 2: Upload source image to Storage (or use external URL)
+    // Step 2: Upload source image
     let finalSourceImageUrl: string;
     try {
       if (sourceImageBase64) {
@@ -110,14 +125,8 @@ export async function POST(req: NextRequest) {
         finalSourceImageUrl = sourceImageUrl!;
       }
     } catch (uploadError) {
-      // If upload fails, mark video as failed and clean up
-      await supabase
-        .from('videos')
-        .update({
-          status: 'failed',
-          error_message: uploadError instanceof Error ? uploadError.message : 'Upload failed',
-        })
-        .eq('id', video.id);
+      // Cleanup: delete the video record since we couldn't get the image
+      await supabase.from('videos').delete().eq('id', video.id);
 
       return NextResponse.json(
         { error: uploadError instanceof Error ? uploadError.message : 'Image upload failed' },
@@ -140,7 +149,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    return NextResponse.json(updated);
+    // Step 4: Deduct credits NOW (after we have a valid video record)
+    let newBalance: number;
+    try {
+      newBalance = await deductCredits(
+        userId,
+        creditCost,
+        video.id,
+        `${duration}s video generation`
+      );
+    } catch (creditError) {
+      // Rare race: credits became insufficient between check and deduct
+      // Clean up: delete the video record
+      await supabase.from('videos').delete().eq('id', video.id);
+
+      return NextResponse.json(
+        {
+          error: creditError instanceof Error ? creditError.message : 'Credit deduction failed',
+          out_of_credits: true,
+        },
+        { status: 402 }
+      );
+    }
+
+    return NextResponse.json({
+      ...updated,
+      credits_balance: newBalance, // include new balance for instant UI update
+    });
   } catch (error) {
     console.error('Create video error:', error);
     return NextResponse.json(

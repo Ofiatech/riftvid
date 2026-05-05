@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fal } from '@fal-ai/client';
 import { auth } from '@clerk/nextjs/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
+import { refundCredits, getCreditCost } from '@/lib/credits';
 
 fal.config({
   credentials: process.env.FAL_KEY,
@@ -25,7 +26,6 @@ async function persistVideoToStorage(
 ): Promise<string> {
   const supabase = getSupabaseAdmin();
 
-  // Download video from Fal's CDN
   const response = await fetch(falVideoUrl);
   if (!response.ok) {
     throw new Error(`Failed to download video from Fal: ${response.status}`);
@@ -50,6 +50,47 @@ async function persistVideoToStorage(
     .getPublicUrl(fileName);
 
   return urlData.publicUrl;
+}
+
+// Helper: refund credits when video fails (only refund if not already refunded)
+async function handleVideoFailure(
+  userId: string,
+  videoId: string,
+  duration: number,
+  errorMessage: string
+) {
+  const supabase = getSupabaseAdmin();
+
+  // Check if already refunded by looking at transactions
+  const { data: existingRefund } = await supabase
+    .from('transactions')
+    .select('id')
+    .eq('related_video_id', videoId)
+    .eq('type', 'refund')
+    .maybeSingle();
+
+  if (existingRefund) {
+    // Already refunded, don't double-refund
+    return;
+  }
+
+  // Update video status
+  await supabase
+    .from('videos')
+    .update({
+      status: 'failed',
+      error_message: errorMessage,
+    })
+    .eq('id', videoId);
+
+  // Refund credits
+  try {
+    const creditAmount = getCreditCost(duration as 5 | 10);
+    await refundCredits(userId, creditAmount, videoId, `Auto-refund: ${errorMessage}`);
+  } catch (refundError) {
+    console.error('Refund failed (non-fatal):', refundError);
+    // Don't throw — we still want to return the failed status to the user
+  }
 }
 
 export async function GET(
@@ -79,7 +120,7 @@ export async function GET(
     // Find the video record matching this Fal request ID + user
     const { data: video, error: findError } = await supabase
       .from('videos')
-      .select('id, user_id, status, generated_video_url')
+      .select('id, user_id, status, generated_video_url, duration')
       .eq('fal_request_id', requestId)
       .eq('user_id', userId)
       .single();
@@ -90,12 +131,19 @@ export async function GET(
 
     // If we already persisted the video, return the cached URL immediately
     if (video.status === 'completed' && video.generated_video_url) {
-      const cachedResponse: StatusResponse = {
+      return NextResponse.json({
         status: 'completed',
         progress: 100,
         videoUrl: video.generated_video_url,
-      };
-      return NextResponse.json(cachedResponse);
+      } as StatusResponse);
+    }
+
+    // If already failed (e.g., from earlier check), return that status
+    if (video.status === 'failed') {
+      return NextResponse.json({
+        status: 'failed',
+        error: 'Generation failed (credits already refunded)',
+      } as StatusResponse);
     }
 
     // Check status with Fal
@@ -105,7 +153,6 @@ export async function GET(
     );
 
     if (statusInfo.status === 'COMPLETED') {
-      // Fetch result from Fal
       const result = await fal.queue.result(
         'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
         { requestId }
@@ -115,29 +162,22 @@ export async function GET(
       const falVideoUrl = data?.video?.url;
 
       if (!falVideoUrl) {
-        await supabase
-          .from('videos')
-          .update({ status: 'failed', error_message: 'Video generated but URL missing' })
-          .eq('id', video.id);
-
-        const failed: StatusResponse = {
+        await handleVideoFailure(userId, video.id, video.duration, 'Video generated but URL missing');
+        return NextResponse.json({
           status: 'failed',
-          error: 'Video generated but URL missing',
-        };
-        return NextResponse.json(failed);
+          error: 'Video generated but URL missing — credits refunded',
+        } as StatusResponse);
       }
 
-      // Persist to our Storage so the video never expires
+      // Persist to our Storage
       let permanentUrl: string;
       try {
         permanentUrl = await persistVideoToStorage(falVideoUrl, userId, video.id);
       } catch (persistError) {
         console.error('Persist error:', persistError);
-        // Even if storage upload fails, return the Fal URL so user can at least see it now
-        permanentUrl = falVideoUrl;
+        permanentUrl = falVideoUrl; // fallback to Fal URL
       }
 
-      // Update DB
       await supabase
         .from('videos')
         .update({
@@ -146,12 +186,11 @@ export async function GET(
         })
         .eq('id', video.id);
 
-      const response: StatusResponse = {
+      return NextResponse.json({
         status: 'completed',
         progress: 100,
         videoUrl: permanentUrl,
-      };
-      return NextResponse.json(response);
+      } as StatusResponse);
     }
 
     if (statusInfo.status === 'IN_PROGRESS') {
@@ -159,36 +198,28 @@ export async function GET(
       const logMessages = logs.map((l) => l.message);
       const estimatedProgress = Math.min(90, 20 + logMessages.length * 8);
 
-      const response: StatusResponse = {
+      return NextResponse.json({
         status: 'processing',
         progress: estimatedProgress,
         logs: logMessages.slice(-3),
-      };
-      return NextResponse.json(response);
+      } as StatusResponse);
     }
 
     if (statusInfo.status === 'IN_QUEUE') {
-      const response: StatusResponse = {
+      return NextResponse.json({
         status: 'queued',
         progress: 5,
-      };
-      return NextResponse.json(response);
+      } as StatusResponse);
     }
 
-    // Unknown status — mark as failed
-    await supabase
-      .from('videos')
-      .update({
-        status: 'failed',
-        error_message: `Unexpected Fal status: ${(statusInfo as { status: string }).status}`,
-      })
-      .eq('id', video.id);
+    // Unknown status — mark as failed and refund
+    const errorMsg = `Unexpected Fal status: ${(statusInfo as { status: string }).status}`;
+    await handleVideoFailure(userId, video.id, video.duration, errorMsg);
 
-    const response: StatusResponse = {
+    return NextResponse.json({
       status: 'failed',
-      error: `Unexpected status: ${(statusInfo as { status: string }).status}`,
-    };
-    return NextResponse.json(response);
+      error: `${errorMsg} — credits refunded`,
+    } as StatusResponse);
   } catch (error) {
     console.error('Status check error:', error);
     return NextResponse.json(

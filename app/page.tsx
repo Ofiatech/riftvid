@@ -8,9 +8,8 @@ import {
   Search, Bell, Plus, Sparkles, Globe, UserPlus, Play, Upload, Zap, BarChart2,
   Link2, Wand2, X, Video, Library, ChevronRight, Menu, ArrowLeft, Loader2, Check,
   RefreshCw, Eye, Download, Film, Clock, MessageCircle, Trash2, MoreVertical,
+  CreditCard, AlertCircle,
 } from 'lucide-react';
-
-const mockUser = { plan: 'Pro', credits: 847, creditsMax: 1000 };
 
 type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
@@ -27,6 +26,33 @@ interface VideoData {
   scene_type: string | null;
   rift_used: boolean;
   error_message: string | null;
+}
+
+interface UserProfileData {
+  credits_balance: number;
+  credits_lifetime_purchased: number;
+  credits_lifetime_used: number;
+  subscription_tier: 'free' | 'creator' | 'pro' | 'team';
+  subscription_status: string;
+}
+
+// Tier max credits for progress bar display
+function getMaxCreditsForTier(tier: string): number {
+  switch (tier) {
+    case 'creator': return 50;
+    case 'pro': return 150;
+    case 'team': return 500;
+    default: return 5; // free tier base
+  }
+}
+
+function getTierLabel(tier: string): string {
+  switch (tier) {
+    case 'creator': return 'Creator';
+    case 'pro': return 'Pro';
+    case 'team': return 'Team';
+    default: return 'Free';
+  }
 }
 
 function formatRelativeTime(iso: string): string {
@@ -63,7 +89,7 @@ async function downloadVideo(url: string, filename: string) {
   }
 }
 
-function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function Sidebar({ open, onClose, profile }: { open: boolean; onClose: () => void; profile: UserProfileData | null }) {
   const { user } = useUser();
   const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
 
@@ -76,6 +102,12 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     { name: 'Analytics', icon: BarChart3, href: '#' },
   ];
   const bottomItems = [{ name: 'Settings', icon: Settings }, { name: 'Help', icon: HelpCircle }];
+
+  const credits = profile?.credits_balance ?? 0;
+  const tier = profile?.subscription_tier ?? 'free';
+  const maxCredits = getMaxCreditsForTier(tier);
+  const tierLabel = getTierLabel(tier);
+  const progressPct = maxCredits > 0 ? Math.min(100, (credits / maxCredits) * 100) : 0;
 
   return (
     <>
@@ -111,12 +143,14 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
             <div className="relative z-10">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[12px] font-medium text-zinc-300">Credits</span>
-                <span className="text-[11px] text-zinc-500">{mockUser.credits}/{mockUser.creditsMax}</span>
+                <span className="text-[11px] text-zinc-500">{credits}{maxCredits > 0 && ` / ${maxCredits}`}</span>
               </div>
               <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-purple-400 to-blue-400 rounded-full" style={{ width: `${(mockUser.credits / mockUser.creditsMax) * 100}%` }} />
+                <div className="h-full bg-gradient-to-r from-purple-400 to-blue-400 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
               </div>
-              <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">Upgrade plan</button>
+              <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">
+                {credits === 0 ? 'Get more credits' : 'Upgrade plan'}
+              </button>
             </div>
           </div>
         </div>
@@ -138,7 +172,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
               <div className="text-[13px] font-medium text-white truncate">{displayName}</div>
               <div className="text-[11px] text-zinc-500 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                {mockUser.plan}
+                {tierLabel}
               </div>
             </div>
           </div>
@@ -177,9 +211,10 @@ function Topbar({ onNewGeneration, onToggleSidebar }: { onNewGeneration: () => v
   );
 }
 
-function HeroCard({ onNewGeneration, totalJobs }: { onNewGeneration: () => void; totalJobs: number }) {
+function HeroCard({ onNewGeneration, totalJobs, profile }: { onNewGeneration: () => void; totalJobs: number; profile: UserProfileData | null }) {
   const { user } = useUser();
   const displayName = user?.firstName || user?.username || 'Creator';
+  const credits = profile?.credits_balance ?? 0;
   return (
     <div className="relative rounded-3xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.08] via-[#0a0a0b] to-blue-500/[0.05] p-6 sm:p-8 md:p-10 overflow-hidden">
       <div className="absolute -top-32 -right-32 w-80 h-80 rounded-full bg-purple-500/20 blur-[100px] opacity-60" />
@@ -211,7 +246,7 @@ function HeroCard({ onNewGeneration, totalJobs }: { onNewGeneration: () => void;
               <Zap className="w-4 h-4 text-amber-300 fill-amber-300/50" strokeWidth={2} />
             </div>
             <div>
-              <div className="text-[18px] font-semibold text-white leading-none">{mockUser.credits}</div>
+              <div className="text-[18px] font-semibold text-white leading-none">{credits}</div>
               <div className="text-[11px] text-zinc-500 mt-0.5">Credits left</div>
             </div>
           </div>
@@ -347,6 +382,7 @@ function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | 
           <div className="aspect-video bg-rose-500/[0.04] flex flex-col items-center justify-center gap-2 px-5 text-center">
             <div className="text-[14px] font-medium text-rose-200">Generation failed</div>
             <div className="text-[12px] text-zinc-400 max-w-md">{video.error_message || 'Unknown error'}</div>
+            <div className="text-[11px] text-emerald-300 mt-1">✓ Credits refunded automatically</div>
           </div>
         ) : (
           <div className="aspect-video bg-purple-500/[0.04] flex flex-col items-center justify-center gap-3">
@@ -392,7 +428,7 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boolean; onClose: () => void; onGenerationComplete: () => void }) {
+function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onProfileUpdate }: { open: boolean; onClose: () => void; onGenerationComplete: () => void; profile: UserProfileData | null; onProfileUpdate: () => void }) {
   const [useUrl, setUseUrl] = useState(false);
   const [aiOptimization, setAiOptimization] = useState(true);
   const [prompt, setPrompt] = useState('');
@@ -421,10 +457,15 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
   const [genLogs, setGenLogs] = useState<string[]>([]);
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
+  const [outOfCredits, setOutOfCredits] = useState(false);
 
   const customInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const credits = profile?.credits_balance ?? 0;
+  const requiredCredits = duration === 5 ? 1 : 2;
+  const canAffordGeneration = credits >= requiredCredits;
 
   useEffect(() => { if (showCustomInput) customInputRef.current?.focus(); }, [showCustomInput]);
 
@@ -444,6 +485,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
     setCustomAnswer(''); setShowCustomInput(false); setError(null); setPrompt('');
     handleRemoveFile(); setImageUrl(''); setFileError(null); setDuration(5);
     setGenMode('idle'); setGenProgress(0); setGenLogs([]); setGeneratedVideoUrl(null); setGenError(null);
+    setOutOfCredits(false);
     onClose();
   };
 
@@ -554,6 +596,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
         setGenMode('completed'); setGenProgress(100); setGeneratedVideoUrl(data.videoUrl);
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
         onGenerationComplete();
+        onProfileUpdate(); // refresh credits in case anything changed
       } else if (data.status === 'processing') {
         setGenMode('processing'); setGenProgress(data.progress || 50);
         if (data.logs) setGenLogs(data.logs);
@@ -563,6 +606,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
         setGenMode('failed'); setGenError(data.error || 'Video generation failed');
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
         onGenerationComplete();
+        onProfileUpdate(); // refresh credits — they were refunded!
       }
     } catch (err) { console.error('Polling error:', err); }
   };
@@ -570,7 +614,13 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
   const handleGenerate = async () => {
     if (!prompt.trim()) { setGenError('Please type or generate a prompt first'); return; }
     if (!selectedFile && !previewUrl) { setGenError('Please upload an image first'); return; }
+    if (!canAffordGeneration) {
+      setOutOfCredits(true);
+      return;
+    }
+
     setGenMode('submitting'); setGenProgress(0); setGenError(null); setGenLogs([]); setGeneratedVideoUrl(null);
+    setOutOfCredits(false);
 
     try {
       let sourceImageBase64: string | undefined;
@@ -595,7 +645,19 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
       });
 
       const created = await createRes.json();
+
+      // Handle 402 Payment Required (out of credits)
+      if (createRes.status === 402 || created.out_of_credits) {
+        setGenMode('idle');
+        setOutOfCredits(true);
+        onProfileUpdate(); // refresh balance
+        return;
+      }
+
       if (!createRes.ok) throw new Error(created.error || 'Failed to create video record');
+
+      // Update profile with new balance from response
+      onProfileUpdate();
 
       const genRes = await fetch('/api/generate-video', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -632,6 +694,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
     if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
     setGenMode('idle'); setGenProgress(0); setGenLogs([]); setGeneratedVideoUrl(null); setGenError(null);
     setChatMode('idle'); setPrompt(''); handleRemoveFile();
+    setOutOfCredits(false);
   };
 
   const isGenerating = ['submitting', 'queued', 'processing'].includes(genMode);
@@ -650,6 +713,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
                 <Sparkles className="w-2.5 h-2.5" strokeWidth={2.5} />
                 {genMode === 'completed' ? '🎬 Video Ready' :
                   isGenerating ? `Rendering · ${genProgress}%` :
+                  outOfCredits ? 'Out of Credits' :
                   chatMode === 'asking' || chatMode === 'refining' ? 'Talking with Rift' :
                   chatMode === 'done' ? 'Refined Prompt Ready' :
                   chatMode === 'error' ? 'Connection Issue' : 'New Generation'}
@@ -657,11 +721,13 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
               <h2 className="text-[22px] font-semibold text-white tracking-tight">
                 {genMode === 'completed' ? 'Your video is ready' :
                   isGenerating ? 'Creating your video...' :
+                  outOfCredits ? 'You need more credits' :
                   chatMode === 'done' ? 'Review your prompt' : 'Create a new video'}
               </h2>
               <p className="text-[13px] text-zinc-400 mt-1">
                 {genMode === 'completed' ? 'Watch, download, or create another. Saved to your library.' :
                   isGenerating ? 'AI is rendering your scene. This takes 30-90 seconds.' :
+                  outOfCredits ? `You have ${credits} credit${credits === 1 ? '' : 's'} but need ${requiredCredits}.` :
                   chatMode === 'done' ? 'You can edit the prompt below before generating.' :
                   'Upload an image and describe the motion you want.'}
               </p>
@@ -671,6 +737,26 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
             </button>
           </div>
 
+          {/* OUT OF CREDITS */}
+          {outOfCredits && (
+            <div className="mb-5 rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] p-6 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
+                <CreditCard className="w-6 h-6 text-amber-300" strokeWidth={1.75} />
+              </div>
+              <div className="text-[15px] font-semibold text-white mb-2">Out of credits</div>
+              <div className="text-[13px] text-zinc-400 mb-5 max-w-sm mx-auto">
+                You used all {profile?.credits_lifetime_used ?? 0} of your free credits. Top up to keep creating videos.
+              </div>
+              <div className="flex items-center justify-center gap-2">
+                <button onClick={handleClose} className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">Maybe later</button>
+                <button onClick={() => alert('Payments coming soon! 🚀')} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white text-[13px] font-semibold shadow-lg shadow-amber-500/30 transition-all">
+                  <Zap className="w-3.5 h-3.5" strokeWidth={2.25} />
+                  Get more credits
+                </button>
+              </div>
+            </div>
+          )}
+
           {genMode === 'completed' && generatedVideoUrl && (
             <div className="mb-5">
               <div className="relative rounded-xl overflow-hidden border border-purple-500/30 bg-black">
@@ -678,7 +764,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
               </div>
               <div className="mt-3 flex items-center gap-2 text-[12px] text-zinc-400">
                 <Check className="w-3.5 h-3.5 text-emerald-400" strokeWidth={2.5} />
-                <span>{duration}s · Saved to your library</span>
+                <span>{duration}s · Saved to your library · {credits} credits remaining</span>
               </div>
             </div>
           )}
@@ -724,7 +810,11 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
           {genMode === 'failed' && (
             <div className="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] p-5 text-center">
               <div className="text-[14px] font-medium text-rose-200 mb-1">Generation failed</div>
-              <div className="text-[12px] text-zinc-400 mb-4">{genError}</div>
+              <div className="text-[12px] text-zinc-400 mb-2">{genError}</div>
+              <div className="text-[11px] text-emerald-300 mb-4 flex items-center justify-center gap-1">
+                <Check className="w-3 h-3" strokeWidth={2.5} />
+                Credits refunded automatically
+              </div>
               <div className="flex items-center justify-center gap-2">
                 <button onClick={handleGenerate} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold transition-all">
                   <RefreshCw className="w-3.5 h-3.5" strokeWidth={2.25} />
@@ -735,7 +825,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
             </div>
           )}
 
-          {!isGenerating && genMode !== 'completed' && genMode !== 'failed' && (
+          {!isGenerating && genMode !== 'completed' && genMode !== 'failed' && !outOfCredits && (
             <>
               {(chatMode === 'idle' || chatMode === 'done') && (
                 <div className="mb-5">
@@ -948,6 +1038,14 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
                       </div>
                     </button>
                   </div>
+                  {credits > 0 && credits <= 3 && (
+                    <div className="mt-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-300 shrink-0 mt-0.5" strokeWidth={2} />
+                      <div className="text-[11px] text-amber-200">
+                        Only <span className="font-semibold">{credits} credit{credits === 1 ? '' : 's'}</span> left. Generate wisely or top up soon.
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -979,10 +1077,10 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
           <div className="flex items-center justify-between pt-4 border-t border-[#141821] gap-3">
             <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
               <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/50" strokeWidth={2} />
-              <span><span className="text-zinc-300 font-medium">{duration === 5 ? '1 credit' : '2 credits'}</span> · {mockUser.credits} available</span>
+              <span><span className="text-zinc-300 font-medium">{requiredCredits} credit{requiredCredits > 1 ? 's' : ''}</span> · {credits} available</span>
             </div>
             <div className="flex items-center gap-2">
-              {chatMode === 'idle' && genMode === 'idle' && (
+              {chatMode === 'idle' && genMode === 'idle' && !outOfCredits && (
                 <>
                   <button onClick={handleClose} className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">Cancel</button>
                   <button onClick={aiOptimization ? handleStartRift : handleGenerate} disabled={aiOptimization ? !prompt.trim() : !canGenerate} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
@@ -994,7 +1092,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete }: { open: boo
               {(chatMode === 'asking' || chatMode === 'refining') && genMode === 'idle' && (
                 <button onClick={handleRestart} className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">Cancel</button>
               )}
-              {chatMode === 'done' && genMode === 'idle' && (
+              {chatMode === 'done' && genMode === 'idle' && !outOfCredits && (
                 <>
                   <button onClick={handleRestart} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">
                     <ArrowLeft className="w-3.5 h-3.5" strokeWidth={2} />
@@ -1035,6 +1133,18 @@ export default function Dashboard() {
   const [videos, setVideos] = useState<VideoData[]>([]);
   const [videosLoading, setVideosLoading] = useState(true);
   const [previewVideo, setPreviewVideo] = useState<VideoData | null>(null);
+  const [profile, setProfile] = useState<UserProfileData | null>(null);
+
+  const fetchProfile = useCallback(async () => {
+    try {
+      const res = await fetch('/api/profile');
+      if (!res.ok) return;
+      const data = await res.json();
+      setProfile(data);
+    } catch (err) {
+      console.error('Profile fetch error:', err);
+    }
+  }, []);
 
   const fetchVideos = useCallback(async () => {
     try {
@@ -1049,7 +1159,10 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => { fetchVideos(); }, [fetchVideos]);
+  useEffect(() => {
+    fetchProfile();
+    fetchVideos();
+  }, [fetchProfile, fetchVideos]);
 
   useEffect(() => {
     const hasProcessing = videos.some((v) => v.status === 'queued' || v.status === 'processing');
@@ -1096,11 +1209,11 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white relative">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} profile={profile} />
       <main className="lg:ml-64 relative z-[1]">
         <Topbar onNewGeneration={() => setModalOpen(true)} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
-          <section className="mb-8"><HeroCard onNewGeneration={() => setModalOpen(true)} totalJobs={videos.length} /></section>
+          <section className="mb-8"><HeroCard onNewGeneration={() => setModalOpen(true)} totalJobs={videos.length} profile={profile} /></section>
           <section className="mb-10 sm:mb-12">
             <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider mb-4">Studio Tools</h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -1133,7 +1246,7 @@ export default function Dashboard() {
                 </div>
                 <h3 className="text-[16px] font-semibold text-white mb-1">No videos yet</h3>
                 <p className="text-[13px] text-zinc-400 mb-5 max-w-md mx-auto">
-                  Create your first AI-generated video. Upload an image, describe the motion, and watch it come alive.
+                  You have <span className="text-purple-300 font-semibold">{profile?.credits_balance ?? 5} free credits</span> to start. Upload an image, describe the motion, and watch it come alive.
                 </p>
                 <button onClick={() => setModalOpen(true)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all">
                   <Sparkles className="w-3.5 h-3.5" strokeWidth={2.25} />
@@ -1156,7 +1269,7 @@ export default function Dashboard() {
           <div className="h-16" />
         </div>
       </main>
-      <NewGenerationModal open={modalOpen} onClose={() => setModalOpen(false)} onGenerationComplete={fetchVideos} />
+      <NewGenerationModal open={modalOpen} onClose={() => setModalOpen(false)} onGenerationComplete={fetchVideos} profile={profile} onProfileUpdate={fetchProfile} />
       <VideoPreviewModal video={previewVideo} onClose={() => setPreviewVideo(null)} onDownload={handleDownloadFromPreview} />
     </div>
   );

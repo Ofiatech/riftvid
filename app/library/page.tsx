@@ -9,8 +9,6 @@ import {
   RefreshCw, Download, Film, Trash2, MoreVertical, ArrowLeft, Plus,
 } from 'lucide-react';
 
-const mockUser = { plan: 'Pro', credits: 847, creditsMax: 1000 };
-
 type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
 interface VideoData {
@@ -28,7 +26,33 @@ interface VideoData {
   error_message: string | null;
 }
 
+interface UserProfileData {
+  credits_balance: number;
+  credits_lifetime_purchased: number;
+  credits_lifetime_used: number;
+  subscription_tier: 'free' | 'creator' | 'pro' | 'team';
+  subscription_status: string;
+}
+
 type FilterTab = 'all' | 'completed' | 'processing' | 'failed';
+
+function getMaxCreditsForTier(tier: string): number {
+  switch (tier) {
+    case 'creator': return 50;
+    case 'pro': return 150;
+    case 'team': return 500;
+    default: return 5;
+  }
+}
+
+function getTierLabel(tier: string): string {
+  switch (tier) {
+    case 'creator': return 'Creator';
+    case 'pro': return 'Pro';
+    case 'team': return 'Team';
+    default: return 'Free';
+  }
+}
 
 function formatRelativeTime(iso: string): string {
   const now = Date.now();
@@ -64,7 +88,7 @@ async function downloadVideo(url: string, filename: string) {
   }
 }
 
-function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+function Sidebar({ open, onClose, profile }: { open: boolean; onClose: () => void; profile: UserProfileData | null }) {
   const { user } = useUser();
   const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
 
@@ -77,6 +101,12 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     { name: 'Analytics', icon: BarChart3, href: '#' },
   ];
   const bottomItems = [{ name: 'Settings', icon: Settings }, { name: 'Help', icon: HelpCircle }];
+
+  const credits = profile?.credits_balance ?? 0;
+  const tier = profile?.subscription_tier ?? 'free';
+  const maxCredits = getMaxCreditsForTier(tier);
+  const tierLabel = getTierLabel(tier);
+  const progressPct = maxCredits > 0 ? Math.min(100, (credits / maxCredits) * 100) : 0;
 
   return (
     <>
@@ -97,7 +127,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">Workspace</div>
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = item.name === 'Projects'; // Library page = Projects active
+            const isActive = item.name === 'Projects';
             return (
               <Link key={item.name} href={item.href} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] transition-all duration-200 ${isActive ? 'bg-white/[0.06] text-white shadow-sm' : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'}`}>
                 <Icon className={`w-[18px] h-[18px] ${isActive ? 'text-purple-400' : ''}`} strokeWidth={1.75} />
@@ -112,12 +142,14 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
             <div className="relative z-10">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[12px] font-medium text-zinc-300">Credits</span>
-                <span className="text-[11px] text-zinc-500">{mockUser.credits}/{mockUser.creditsMax}</span>
+                <span className="text-[11px] text-zinc-500">{credits}{maxCredits > 0 && ` / ${maxCredits}`}</span>
               </div>
               <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-purple-400 to-blue-400 rounded-full" style={{ width: `${(mockUser.credits / mockUser.creditsMax) * 100}%` }} />
+                <div className="h-full bg-gradient-to-r from-purple-400 to-blue-400 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
               </div>
-              <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">Upgrade plan</button>
+              <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">
+                {credits === 0 ? 'Get more credits' : 'Upgrade plan'}
+              </button>
             </div>
           </div>
         </div>
@@ -139,7 +171,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
               <div className="text-[13px] font-medium text-white truncate">{displayName}</div>
               <div className="text-[11px] text-zinc-500 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                {mockUser.plan}
+                {tierLabel}
               </div>
             </div>
           </div>
@@ -196,7 +228,7 @@ function StatusBadge({ status, error }: { status: VideoStatus; error?: string | 
 function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () => void; onDelete: () => void }) {
   const [showMenu, setShowMenu] = useState(false);
   return (
-    <div className="group cursor-pointer relative" onClick={onPlay}>
+    <div className="group cursor-pointer relative card-stagger" onClick={onPlay}>
       <div className="relative aspect-video rounded-xl overflow-hidden border border-[#1f2937] bg-[#0a0a0b] lift">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={video.source_image_url} alt={video.title || 'Video thumbnail'} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -243,9 +275,9 @@ function VideoCard({ video, onPlay, onDelete }: { video: VideoData; onPlay: () =
 function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | null; onClose: () => void; onDownload: () => void }) {
   if (!video) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-[fade-in_0.2s_ease-out]" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
-      <div className="relative w-full max-w-3xl rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/80 animate-backdrop-in" />
+      <div className="relative w-full max-w-3xl rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl overflow-hidden animate-modal-in" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#141821]">
           <div className="min-w-0 flex-1">
             <h3 className="text-[14px] font-semibold text-white truncate">{video.title || 'Untitled'}</h3>
@@ -269,6 +301,7 @@ function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | 
           <div className="aspect-video bg-rose-500/[0.04] flex flex-col items-center justify-center gap-2 px-5 text-center">
             <div className="text-[14px] font-medium text-rose-200">Generation failed</div>
             <div className="text-[12px] text-zinc-400 max-w-md">{video.error_message || 'Unknown error'}</div>
+            <div className="text-[11px] text-emerald-300 mt-1">✓ Credits refunded automatically</div>
           </div>
         ) : (
           <div className="aspect-video bg-purple-500/[0.04] flex flex-col items-center justify-center gap-3">
@@ -298,6 +331,18 @@ export default function LibraryPage() {
   const [previewVideo, setPreviewVideo] = useState<VideoData | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [profile, setProfile] = useState<UserProfileData | null>(null);
+
+  const fetchProfile = useCallback(async () => {
+    try {
+      const res = await fetch('/api/profile');
+      if (!res.ok) return;
+      const data = await res.json();
+      setProfile(data);
+    } catch (err) {
+      console.error('Profile fetch error:', err);
+    }
+  }, []);
 
   const fetchVideos = useCallback(async () => {
     try {
@@ -312,15 +357,20 @@ export default function LibraryPage() {
     }
   }, []);
 
-  useEffect(() => { fetchVideos(); }, [fetchVideos]);
+  useEffect(() => {
+    fetchProfile();
+    fetchVideos();
+  }, [fetchProfile, fetchVideos]);
 
-  // Auto-refresh while videos are processing
   useEffect(() => {
     const hasProcessing = videos.some((v) => v.status === 'queued' || v.status === 'processing');
     if (!hasProcessing) return;
-    const interval = setInterval(fetchVideos, 5000);
+    const interval = setInterval(() => {
+      fetchVideos();
+      fetchProfile();
+    }, 5000);
     return () => clearInterval(interval);
-  }, [videos, fetchVideos]);
+  }, [videos, fetchVideos, fetchProfile]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(min-width: 1024px)');
@@ -356,7 +406,6 @@ export default function LibraryPage() {
     }
   };
 
-  // Filter + search videos
   const filteredVideos = videos.filter((v) => {
     if (activeFilter === 'completed' && v.status !== 'completed') return false;
     if (activeFilter === 'processing' && v.status !== 'processing' && v.status !== 'queued') return false;
@@ -370,7 +419,6 @@ export default function LibraryPage() {
     return true;
   });
 
-  // Counts for filter tabs
   const counts = {
     all: videos.length,
     completed: videos.filter((v) => v.status === 'completed').length,
@@ -387,12 +435,11 @@ export default function LibraryPage() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white relative">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} profile={profile} />
       <main className="lg:ml-64 relative z-[1]">
         <Topbar onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
 
         <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
-          {/* Header */}
           <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
             <div className="flex items-center gap-3 min-w-0">
               <Link href="/" className="lg:hidden p-2 -ml-2 rounded-lg hover:bg-white/[0.04] transition-colors shrink-0" aria-label="Back">
@@ -409,35 +456,17 @@ export default function LibraryPage() {
             </button>
           </div>
 
-          {/* Search bar */}
           <div className="relative mb-5">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" strokeWidth={2} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by title or prompt..."
-              className="w-full pl-10 pr-4 py-2.5 bg-white/[0.03] border border-[#1f2937] rounded-lg text-[14px] placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all"
-            />
+            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search by title or prompt..." className="w-full pl-10 pr-4 py-2.5 bg-white/[0.03] border border-[#1f2937] rounded-lg text-[14px] placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all" />
           </div>
 
-          {/* Filter tabs */}
           <div className="flex items-center gap-1 p-0.5 rounded-lg bg-white/[0.03] border border-[#1f2937] mb-6 overflow-x-auto">
             {filterTabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveFilter(tab.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md font-medium whitespace-nowrap transition-all ${
-                  activeFilter === tab.id
-                    ? 'bg-white/[0.08] text-white'
-                    : 'text-zinc-400 hover:text-white hover:bg-white/[0.03]'
-                }`}
-              >
+              <button key={tab.id} onClick={() => setActiveFilter(tab.id)} className={`flex items-center gap-1.5 px-3 py-1.5 text-[12px] rounded-md font-medium whitespace-nowrap transition-all ${activeFilter === tab.id ? 'bg-white/[0.08] text-white' : 'text-zinc-400 hover:text-white hover:bg-white/[0.03]'}`}>
                 {tab.label}
                 {tab.count > 0 && (
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${
-                    activeFilter === tab.id ? 'bg-white/[0.1] text-white' : 'bg-white/[0.05] text-zinc-500'
-                  }`}>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${activeFilter === tab.id ? 'bg-white/[0.1] text-white' : 'bg-white/[0.05] text-zinc-500'}`}>
                     {tab.count}
                   </span>
                 )}
@@ -445,21 +474,19 @@ export default function LibraryPage() {
             ))}
           </div>
 
-          {/* Content */}
           {loading ? (
             <div className="flex flex-col items-center justify-center py-24 text-center">
               <Loader2 className="w-10 h-10 text-purple-400 animate-spin mb-4" strokeWidth={2} />
               <div className="text-[14px] text-zinc-400">Loading your library...</div>
             </div>
           ) : videos.length === 0 ? (
-            // Truly empty (no videos at all)
             <div className="rounded-2xl border border-dashed border-[#1f2937] bg-white/[0.01] p-12 sm:p-16 text-center">
               <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-4 mx-auto">
                 <Film className="w-7 h-7 text-purple-300" strokeWidth={1.75} />
               </div>
               <h3 className="text-[18px] font-semibold text-white mb-1">Your library is empty</h3>
               <p className="text-[13px] text-zinc-400 mb-5 max-w-md mx-auto">
-                Create your first AI-generated video. Upload an image, describe the motion, and watch it come alive.
+                You have <span className="text-purple-300 font-semibold">{profile?.credits_balance ?? 5} free credits</span> to start. Upload an image, describe the motion, and watch it come alive.
               </p>
               <Link href="/" className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all">
                 <Sparkles className="w-3.5 h-3.5" strokeWidth={2.25} />
@@ -467,7 +494,6 @@ export default function LibraryPage() {
               </Link>
             </div>
           ) : filteredVideos.length === 0 ? (
-            // Has videos but none match current filter/search
             <div className="rounded-2xl border border-dashed border-[#1f2937] bg-white/[0.01] p-12 text-center">
               <div className="w-12 h-12 rounded-xl bg-zinc-500/10 border border-zinc-500/20 flex items-center justify-center mb-3 mx-auto">
                 <Search className="w-5 h-5 text-zinc-400" strokeWidth={2} />
@@ -476,10 +502,7 @@ export default function LibraryPage() {
               <p className="text-[12px] text-zinc-400 mb-4">
                 {searchQuery.trim() ? `No videos match "${searchQuery}"` : 'No videos in this category'}
               </p>
-              <button
-                onClick={() => { setActiveFilter('all'); setSearchQuery(''); }}
-                className="text-[12px] text-purple-300 hover:text-purple-200 transition-colors font-medium"
-              >
+              <button onClick={() => { setActiveFilter('all'); setSearchQuery(''); }} className="text-[12px] text-purple-300 hover:text-purple-200 transition-colors font-medium">
                 Clear filters
               </button>
             </div>
@@ -490,12 +513,7 @@ export default function LibraryPage() {
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-5">
                 {filteredVideos.map((video) => (
-                  <VideoCard
-                    key={video.id}
-                    video={video}
-                    onPlay={() => setPreviewVideo(video)}
-                    onDelete={() => handleDeleteVideo(video.id)}
-                  />
+                  <VideoCard key={video.id} video={video} onPlay={() => setPreviewVideo(video)} onDelete={() => handleDeleteVideo(video.id)} />
                 ))}
               </div>
             </>

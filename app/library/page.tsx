@@ -302,7 +302,6 @@ function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | 
   controls
   autoPlay
   loop
-  playsInline
   preload="metadata"
   className="w-full aspect-video bg-black"
 >

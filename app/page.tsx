@@ -383,7 +383,6 @@ function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | 
   controls
   autoPlay
   loop
-  playsInline
   preload="metadata"
   className="w-full aspect-video bg-black"
 >
@@ -776,7 +775,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
   controls
   autoPlay
   loop
-  playsInline
   preload="metadata"
   className="w-full aspect-video"
 >

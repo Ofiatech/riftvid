@@ -377,7 +377,18 @@ function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | 
           </div>
         </div>
         {video.generated_video_url ? (
-          <video src={video.generated_video_url} controls autoPlay loop className="w-full aspect-video bg-black">Your browser does not support video playback.</video>
+          <video
+  src={video.generated_video_url}
+  poster={video.source_image_url}
+  controls
+  autoPlay
+  loop
+  playsInline
+  preload="metadata"
+  className="w-full aspect-video bg-black"
+>
+  Your browser does not support video playback.
+</video>
         ) : video.status === 'failed' ? (
           <div className="aspect-video bg-rose-500/[0.04] flex flex-col items-center justify-center gap-2 px-5 text-center">
             <div className="text-[14px] font-medium text-rose-200">Generation failed</div>
@@ -760,7 +771,17 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
           {genMode === 'completed' && generatedVideoUrl && (
             <div className="mb-5">
               <div className="relative rounded-xl overflow-hidden border border-purple-500/30 bg-black">
-                <video src={generatedVideoUrl} controls autoPlay loop className="w-full aspect-video">Your browser does not support video playback.</video>
+                <video
+  src={generatedVideoUrl}
+  controls
+  autoPlay
+  loop
+  playsInline
+  preload="metadata"
+  className="w-full aspect-video"
+>
+  Your browser does not support video playback.
+</video>
               </div>
               <div className="mt-3 flex items-center gap-2 text-[12px] text-zinc-400">
                 <Check className="w-3.5 h-3.5 text-emerald-400" strokeWidth={2.5} />

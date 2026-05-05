@@ -296,7 +296,18 @@ function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | 
           </div>
         </div>
         {video.generated_video_url ? (
-          <video src={video.generated_video_url} controls autoPlay loop className="w-full aspect-video bg-black">Your browser does not support video playback.</video>
+          <video
+  src={video.generated_video_url}
+  poster={video.source_image_url}
+  controls
+  autoPlay
+  loop
+  playsInline
+  preload="metadata"
+  className="w-full aspect-video bg-black"
+>
+  Your browser does not support video playback.
+</video>
         ) : video.status === 'failed' ? (
           <div className="aspect-video bg-rose-500/[0.04] flex flex-col items-center justify-center gap-2 px-5 text-center">
             <div className="text-[14px] font-medium text-rose-200">Generation failed</div>

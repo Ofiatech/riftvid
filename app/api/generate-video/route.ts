@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { fal } from '@fal-ai/client';
 import { auth } from '@clerk/nextjs/server';
@@ -9,6 +8,9 @@ fal.config({
 });
 
 export const maxDuration = 60;
+
+// Riftvid uses Grok Imagine for native audio + video generation
+const VIDEO_MODEL = 'xai/grok-imagine-video/image-to-video';
 
 interface GenerateVideoRequest {
   videoId: string; // ID from /api/videos POST response
@@ -65,21 +67,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Video already submitted or completed' }, { status: 400 });
     }
 
-    console.log('Submitting to Fal:', {
+    console.log('Submitting to Grok Imagine:', {
       videoId,
       promptLength: prompt.length,
       duration,
+      model: VIDEO_MODEL,
     });
 
-    // Submit to Fal.ai
-    const submission = await fal.queue.submit('fal-ai/kling-video/v2.5-turbo/pro/image-to-video', {
-      input: {
-        prompt: prompt.trim(),
-        image_url: imageUrl,
-        duration: duration.toString() as '5' | '10',
-      },
-    });
-
+    // Submit to Fal.ai (Grok Imagine model)
+    const submission = await fal.queue.submit(VIDEO_MODEL, {
+  input: {
+    prompt: prompt.trim(),
+    image_url: imageUrl,
+    duration: duration,
+    resolution: '720p',
+    aspect_ratio: 'auto', // ← FIXED
+  },
+});
     // Update DB with fal request ID and status
     await supabase
       .from('videos')
@@ -93,12 +97,12 @@ export async function POST(req: NextRequest) {
       requestId: submission.request_id,
       videoId,
       status: 'queued',
-      estimatedSeconds: duration === 5 ? 45 : 75,
+      estimatedSeconds: 25, // Grok is FAST — ~17-25 seconds
     });
   } catch (error) {
-    console.error('=== FAL ERROR ===');
+    console.error('=== FAL/GROK ERROR ===');
     console.error(error);
-    console.error('=== END FAL ERROR ===');
+    console.error('=== END FAL/GROK ERROR ===');
 
     let userMessage = 'Failed to start video generation';
 

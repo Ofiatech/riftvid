@@ -10,6 +10,9 @@ fal.config({
 
 export const maxDuration = 60;
 
+// Must match the model used in generate-video/route.ts
+const VIDEO_MODEL = 'xai/grok-imagine-video/image-to-video';
+
 interface StatusResponse {
   status: 'queued' | 'processing' | 'completed' | 'failed';
   progress?: number;
@@ -146,18 +149,16 @@ export async function GET(
       } as StatusResponse);
     }
 
-    // Check status with Fal
-    const statusInfo = await fal.queue.status(
-      'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
-      { requestId, logs: true }
-    );
+    // Check status with Fal (Grok Imagine model)
+    const statusInfo = await fal.queue.status(VIDEO_MODEL, {
+      requestId,
+      logs: true,
+    });
 
     if (statusInfo.status === 'COMPLETED') {
-      const result = await fal.queue.result(
-        'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
-        { requestId }
-      );
+      const result = await fal.queue.result(VIDEO_MODEL, { requestId });
 
+      // Grok returns: { video: { url, content_type, height, width, fps, duration, ... } }
       const data = result.data as { video?: { url: string } };
       const falVideoUrl = data?.video?.url;
 
@@ -169,7 +170,7 @@ export async function GET(
         } as StatusResponse);
       }
 
-      // Persist to our Storage
+      // Persist to our Storage (so the video doesn't expire from Fal CDN)
       let permanentUrl: string;
       try {
         permanentUrl = await persistVideoToStorage(falVideoUrl, userId, video.id);
@@ -196,7 +197,8 @@ export async function GET(
     if (statusInfo.status === 'IN_PROGRESS') {
       const logs = (statusInfo as { logs?: { message: string }[] }).logs || [];
       const logMessages = logs.map((l) => l.message);
-      const estimatedProgress = Math.min(90, 20 + logMessages.length * 8);
+      // Grok is faster, so progress moves quicker
+      const estimatedProgress = Math.min(95, 25 + logMessages.length * 10);
 
       return NextResponse.json({
         status: 'processing',
@@ -208,7 +210,7 @@ export async function GET(
     if (statusInfo.status === 'IN_QUEUE') {
       return NextResponse.json({
         status: 'queued',
-        progress: 5,
+        progress: 10,
       } as StatusResponse);
     }
 

@@ -10,6 +10,7 @@ import {
   RefreshCw, Eye, Download, Film, Clock, MessageCircle, Trash2, MoreVertical,
   CreditCard, AlertCircle,
 } from 'lucide-react';
+import RiftFeedbackButton from '@/components/RiftFeedbackButton';
 
 type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
@@ -916,13 +917,23 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
                 {(chatMode === 'idle' || chatMode === 'done') && (
                   <>
                     {chatMode === 'done' && finalAcknowledgment && (
-                      <div className="mb-3 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/20">
-                        <div className="w-6 h-6 rounded-md bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 mt-0.5">
-                          <Sparkles className="w-3 h-3 text-white" strokeWidth={2} />
-                        </div>
-                        <div className="text-[13px] text-zinc-200 leading-relaxed">{finalAcknowledgment}</div>
-                      </div>
-                    )}
+  <div className="mb-3 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/20">
+    <div className="w-6 h-6 rounded-md bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+      <Sparkles className="w-3 h-3 text-white" strokeWidth={2} />
+    </div>
+    <div className="flex-1 text-[13px] text-zinc-200 leading-relaxed">{finalAcknowledgment}</div>
+    <RiftFeedbackButton
+      basePrompt={basePrompt}
+      imageDescription={imageDescription || undefined}
+      questionText={`FINAL PROMPT: ${prompt}`}
+      questionOptions={answers}
+      questionStep={totalSteps + 1}
+      totalSteps={totalSteps}
+      targetGap="final_prompt"
+      riftVersion="v3"
+    />
+  </div>
+)}
                     <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={chatMode === 'done' ? 6 : 3} placeholder={aiOptimization ? "Describe your video idea... Rift will refine it for you" : "Write your full cinematic prompt here..."} className="w-full px-4 py-3 bg-white/[0.03] border border-[#1f2937] rounded-xl text-[14px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all resize-none" />
                   </>
                 )}
@@ -961,21 +972,32 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
                       </div>
                     )}
                     <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5">
-                      <div className="flex items-start gap-3 mb-4">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
-                          <Sparkles className="w-4 h-4 text-white" strokeWidth={2} />
-                        </div>
-                        <div className="flex-1 pt-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-300">Rift Assistant</div>
-                            <div className="flex items-center gap-1 text-[10px] text-zinc-500">
-                              <MessageCircle className="w-2.5 h-2.5" strokeWidth={2} />
-                              <span>{step + 1} of {totalSteps}</span>
-                            </div>
-                          </div>
-                          <div className="text-[15px] font-medium text-white leading-snug">{currentQuestion.question}</div>
-                        </div>
-                      </div>
+                     <div className="flex items-start gap-3 mb-4">
+  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
+    <Sparkles className="w-4 h-4 text-white" strokeWidth={2} />
+  </div>
+  <div className="flex-1 pt-1">
+    <div className="flex items-center justify-between gap-2 mb-1">
+      <div className="flex items-center gap-2">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-300">Rift Assistant</div>
+        <div className="flex items-center gap-1 text-[10px] text-zinc-500">
+          <MessageCircle className="w-2.5 h-2.5" strokeWidth={2} />
+          <span>{step + 1} of {totalSteps}</span>
+        </div>
+      </div>
+      <RiftFeedbackButton
+        basePrompt={basePrompt}
+        imageDescription={imageDescription || undefined}
+        questionText={currentQuestion.question}
+        questionOptions={currentQuestion.options}
+        questionStep={step + 1}
+        totalSteps={totalSteps}
+        riftVersion="v3"
+      />
+    </div>
+    <div className="text-[15px] font-medium text-white leading-snug">{currentQuestion.question}</div>
+  </div>
+</div>
                       <div className="grid grid-cols-2 gap-2 mb-3">
                         {currentQuestion.options.map((option, idx) => (
                           <button key={idx} onClick={() => handleAnswer(option)} className="text-left px-3 py-2.5 rounded-lg bg-white/[0.04] hover:bg-purple-500/15 border border-white/[0.06] hover:border-purple-500/40 text-[13px] font-medium text-zinc-200 hover:text-white transition-all hover:-translate-y-0.5">

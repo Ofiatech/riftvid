@@ -141,3 +141,57 @@ export function generateDefaultProjectName(): string {
   });
   return `Untitled Project · ${dateStr}`;
 }
+// ============================================================================
+// SCENE & CLIP REQUEST/RESPONSE SHAPES (Session 8)
+// ============================================================================
+
+// Create scene
+export interface CreateSceneRequest {
+  name?: string;
+  description?: string;
+}
+
+// Update scene (reorder, rename, etc.)
+export interface UpdateSceneRequest {
+  name?: string;
+  description?: string;
+  scene_order?: number;
+  status?: SceneStatus;
+}
+
+// Create clip (the big one)
+export interface CreateClipRequest {
+  // Source for this clip
+  source_type: ClipSourceType;              // 'upload', 'last_frame', 'library'
+  source_image_base64?: string;             // For 'upload' type
+  source_image_url?: string;                // For 'upload' (external) or 'library'
+  source_clip_id?: string;                  // For 'last_frame' — which clip to chain from
+  
+  // Generation
+  base_prompt?: string;
+  refined_prompt: string;
+  rift_used: boolean;
+  rift_answers?: unknown;
+  scene_description?: string;
+  
+  // Video
+  duration: 5 | 10;
+}
+
+// Update clip (mostly for reordering or correction)
+export interface UpdateClipRequest {
+  clip_order?: number;
+  refined_prompt?: string;
+}
+
+// Scene with all its clips loaded
+export interface SceneWithClips extends SceneRecord {
+  clips: ClipRecord[];
+}
+
+// Frame extraction response
+export interface ExtractFrameResponse {
+  success: boolean;
+  last_frame_url: string;
+  clip_id: string;
+}

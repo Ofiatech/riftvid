@@ -5,7 +5,6 @@ import type { ClipRecord, UpdateClipRequest } from '@/lib/types';
 
 export const maxDuration = 30;
 
-// GET /api/projects/[id]/scenes/[sceneId]/clips/[clipId]
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string; clipId: string }> }
@@ -40,7 +39,6 @@ export async function GET(
   }
 }
 
-// PATCH /api/projects/[id]/scenes/[sceneId]/clips/[clipId]
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string; clipId: string }> }
@@ -90,7 +88,6 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/projects/[id]/scenes/[sceneId]/clips/[clipId]
 export async function DELETE(
   _req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string; clipId: string }> }
@@ -104,7 +101,6 @@ export async function DELETE(
     const { id: projectId, sceneId, clipId } = await context.params;
     const supabase = getSupabaseAdmin();
 
-    // Fetch clip for counter updates
     const { data: clip, error: clipError } = await supabase
       .from('clips')
       .select('*')
@@ -116,7 +112,6 @@ export async function DELETE(
       return NextResponse.json({ error: 'Clip not found' }, { status: 404 });
     }
 
-    // Delete the clip
     const { error: deleteError } = await supabase
       .from('clips')
       .delete()
@@ -128,7 +123,6 @@ export async function DELETE(
       return NextResponse.json({ error: 'Failed to delete clip' }, { status: 500 });
     }
 
-    // Update scene counters
     const { data: scene } = await supabase
       .from('scenes')
       .select('total_clips, total_duration, cover_clip_id')
@@ -142,7 +136,6 @@ export async function DELETE(
         updated_at: new Date().toISOString(),
       };
 
-      // If we deleted the cover clip, pick a new one (or null if no clips left)
       if (scene.cover_clip_id === clipId) {
         const { data: nextCover } = await supabase
           .from('clips')
@@ -158,7 +151,6 @@ export async function DELETE(
       await supabase.from('scenes').update(updates).eq('id', sceneId);
     }
 
-    // Update project counters
     const { data: project } = await supabase
       .from('projects')
       .select('total_clips, total_duration')
@@ -175,9 +167,6 @@ export async function DELETE(
         })
         .eq('id', projectId);
     }
-
-    // TODO: Clean up generated_video_url and last_frame_url from Storage
-    // For v1, leave them — Storage cleanup comes in Session 11 polish
 
     console.log('Clip deleted:', { clipId, sceneId, projectId });
     return NextResponse.json({ success: true, deleted_id: clipId });

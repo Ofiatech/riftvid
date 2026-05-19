@@ -9,7 +9,6 @@ import type {
 
 export const maxDuration = 30;
 
-// Helper: verify scene belongs to user
 async function verifyScene(
   sceneId: string,
   projectId: string,
@@ -28,7 +27,6 @@ async function verifyScene(
   return data as SceneRecord;
 }
 
-// GET /api/projects/[id]/scenes/[sceneId] — get scene with all clips
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string }> }
@@ -71,7 +69,6 @@ export async function GET(
   }
 }
 
-// PATCH /api/projects/[id]/scenes/[sceneId] — update scene (rename, reorder, status)
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string }> }
@@ -149,7 +146,6 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/projects/[id]/scenes/[sceneId] — cascade deletes clips
 export async function DELETE(
   _req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string }> }
@@ -169,14 +165,12 @@ export async function DELETE(
 
     const supabase = getSupabaseAdmin();
 
-    // Get current project to update counters
     const { data: project } = await supabase
       .from('projects')
       .select('total_scenes, total_clips, total_duration')
       .eq('id', projectId)
       .single();
 
-    // CASCADE in SQL auto-deletes clips
     const { error } = await supabase
       .from('scenes')
       .delete()
@@ -188,7 +182,6 @@ export async function DELETE(
       return NextResponse.json({ error: 'Failed to delete scene' }, { status: 500 });
     }
 
-    // Update project counters
     if (project) {
       await supabase
         .from('projects')

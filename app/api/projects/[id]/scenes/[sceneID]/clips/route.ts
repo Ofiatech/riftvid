@@ -5,13 +5,10 @@ import { deductCredits, getCreditCost } from '@/lib/credits';
 import type {
   ClipRecord,
   CreateClipRequest,
-  SceneRecord,
-  ProjectRecord,
 } from '@/lib/types';
 
 export const maxDuration = 60;
 
-// Upload base64 image to Supabase Storage, return URL
 async function uploadBase64ToStorage(
   base64Data: string,
   userId: string,
@@ -19,7 +16,6 @@ async function uploadBase64ToStorage(
 ): Promise<string> {
   const supabase = getSupabaseAdmin();
 
-  // Strip data URL prefix if present (e.g. "data:image/png;base64,xxx")
   const match = base64Data.match(/^data:image\/(\w+);base64,(.+)$/);
   let mimeType = 'image/png';
   let base64Body = base64Data;
@@ -34,7 +30,7 @@ async function uploadBase64ToStorage(
   const fileName = `${userId}/clips/${clipId}/source.${ext}`;
 
   const { error } = await supabase.storage
-    .from('videos') // reuse existing 'videos' bucket
+    .from('videos')
     .upload(fileName, buffer, {
       contentType: mimeType,
       upsert: true,
@@ -46,7 +42,6 @@ async function uploadBase64ToStorage(
   return urlData.publicUrl;
 }
 
-// GET /api/projects/[id]/scenes/[sceneId]/clips — list clips in scene
 export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string }> }
@@ -82,10 +77,6 @@ export async function GET(
   }
 }
 
-// POST /api/projects/[id]/scenes/[sceneId]/clips — create new clip
-// This is the gateway: validates ownership, resolves source image,
-// deducts credits, creates clip record. Generation is triggered separately
-// via /api/generate-video (reuses existing pipeline).
 export async function POST(
   req: NextRequest,
   context: { params: Promise<{ id: string; sceneId: string }> }
@@ -100,7 +91,6 @@ export async function POST(
 
     const supabase = getSupabaseAdmin();
 
-    // Verify scene + project ownership
     const { data: scene, error: sceneError } = await supabase
       .from('scenes')
       .select('*')
@@ -115,7 +105,6 @@ export async function POST(
 
     const body = (await req.json()) as CreateClipRequest;
 
-    // Validate required fields
     if (!body.refined_prompt || typeof body.refined_prompt !== 'string') {
       return NextResponse.json({ error: 'refined_prompt is required' }, { status: 400 });
     }
@@ -126,7 +115,6 @@ export async function POST(
       return NextResponse.json({ error: 'source_type is required' }, { status: 400 });
     }
 
-    // Determine clip_order (max + 1 in scene)
     const { data: existingClips } = await supabase
       .from('clips')
       .select('clip_order')
@@ -138,13 +126,11 @@ export async function POST(
       ? (existingClips[0].clip_order as number) + 1
       : 1;
 
-    // Resolve source image based on source_type
     let sourceImageUrl: string;
     let sourceClipId: string | null = null;
 
     if (body.source_type === 'upload') {
       if (body.source_image_base64) {
-        // Upload base64 → Supabase Storage
         const tempId = crypto.randomUUID();
         sourceImageUrl = await uploadBase64ToStorage(
           body.source_image_base64,
@@ -166,7 +152,6 @@ export async function POST(
           { status: 400 }
         );
       }
-      // Fetch the source clip's last_frame_url
       const { data: sourceClip, error: srcError } = await supabase
         .from('clips')
         .select('last_frame_url, status')
@@ -204,13 +189,12 @@ export async function POST(
       );
     }
 
-    // Deduct credits BEFORE creating clip record (so we don't create orphans on failure)
     const creditCost = getCreditCost(body.duration);
     try {
       await deductCredits(
         userId,
         creditCost,
-        null, // related_video_id set after clip insert
+        sceneId,
         `Sequencer clip (${body.duration}s) in scene ${sceneId}`
       );
     } catch (creditError) {
@@ -224,7 +208,6 @@ export async function POST(
       );
     }
 
-    // Insert clip record
     const { data: newClip, error: insertError } = await supabase
       .from('clips')
       .insert({
@@ -248,14 +231,12 @@ export async function POST(
 
     if (insertError) {
       console.error('Clip insert error:', insertError);
-      // TODO: Refund credits since we deducted but failed to create
       return NextResponse.json(
         { error: 'Failed to create clip' },
         { status: 500 }
       );
     }
 
-    // Update scene + project counters
     await supabase
       .from('scenes')
       .update({
@@ -266,7 +247,6 @@ export async function POST(
       })
       .eq('id', sceneId);
 
-    // Update project counters
     const { data: project } = await supabase
       .from('projects')
       .select('total_clips, total_duration, cover_image_url')

@@ -39,7 +39,7 @@ export default function SceneCard({ scene, projectId, onDelete }: SceneCardProps
 
   return (
     <Link
-      href={`/projects/${projectId}/scenes/${scene.id}`}
+  href={`/studio/${projectId}/scenes/${scene.id}`}
       className="group relative flex items-stretch gap-4 rounded-2xl border border-[#1f2937] bg-[#0a0a0b] p-4 transition-all duration-300 hover:border-[#2d3748] hover:bg-[#0d0d10]"
     >
       {/* Scene number badge */}

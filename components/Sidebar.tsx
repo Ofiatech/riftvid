@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useUser, UserButton } from '@clerk/nextjs';
 import {
   Home, FolderClosed, UserSquare2, Mic, Palette, BarChart3,
-  Settings, HelpCircle, Play, X,
+  Settings, HelpCircle, Play, X, Film,
 } from 'lucide-react';
 
 export interface UserProfileData {
@@ -46,12 +46,13 @@ export default function Sidebar({ open, onClose, profile }: SidebarProps) {
   const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
 
   const navItems = [
-    { name: 'Home', icon: Home, href: '/' },
-    { name: 'Projects', icon: FolderClosed, href: '/projects' },
-    { name: 'Avatars', icon: UserSquare2, href: '#' },
-    { name: 'Voices', icon: Mic, href: '#' },
-    { name: 'Brand Kit', icon: Palette, href: '#' },
-    { name: 'Analytics', icon: BarChart3, href: '#' },
+    { name: 'Home', icon: Home, href: '/', badge: null },
+    { name: 'Rift Studio', icon: Film, href: '/studio', badge: 'NEW' },
+    { name: 'Projects', icon: FolderClosed, href: '/projects', badge: null },
+    { name: 'Avatars', icon: UserSquare2, href: '#', badge: null },
+    { name: 'Voices', icon: Mic, href: '#', badge: null },
+    { name: 'Brand Kit', icon: Palette, href: '#', badge: null },
+    { name: 'Analytics', icon: BarChart3, href: '#', badge: null },
   ];
   const bottomItems = [{ name: 'Settings', icon: Settings }, { name: 'Help', icon: HelpCircle }];
 
@@ -63,6 +64,7 @@ export default function Sidebar({ open, onClose, profile }: SidebarProps) {
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
+    if (href === '/studio') return pathname === '/studio' || pathname.startsWith('/studio/');
     if (href === '/projects') return pathname === '/projects' || pathname.startsWith('/projects/');
     return false;
   };
@@ -103,6 +105,7 @@ export default function Sidebar({ open, onClose, profile }: SidebarProps) {
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
+            const isStudio = item.name === 'Rift Studio';
             return (
               <Link
                 key={item.name}
@@ -111,11 +114,23 @@ export default function Sidebar({ open, onClose, profile }: SidebarProps) {
                   active
                     ? 'bg-white/[0.06] text-white shadow-sm'
                     : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'
-                }`}
+                } ${isStudio && !active ? 'hover:bg-purple-500/[0.06]' : ''}`}
               >
-                <Icon className={`w-[18px] h-[18px] ${active ? 'text-purple-400' : ''}`} strokeWidth={1.75} />
-                <span className="font-medium">{item.name}</span>
-                {active && <span className="ml-auto w-1 h-1 rounded-full bg-purple-400" />}
+                <Icon
+                  className={`w-[18px] h-[18px] ${
+                    active ? 'text-purple-400' : isStudio ? 'text-purple-300/70' : ''
+                  }`}
+                  strokeWidth={1.75}
+                />
+                <span className="font-medium flex-1">{item.name}</span>
+                {item.badge && (
+                  <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-500/20 to-blue-500/20 text-purple-200 border border-purple-500/30">
+                    {item.badge}
+                  </span>
+                )}
+                {active && !item.badge && (
+                  <span className="w-1 h-1 rounded-full bg-purple-400" />
+                )}
               </Link>
             );
           })}

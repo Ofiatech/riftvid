@@ -2,15 +2,15 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { useUser, UserButton } from '@clerk/nextjs';
+import { useUser } from '@clerk/nextjs';
 import {
-  Home, FolderClosed, UserSquare2, Mic, Palette, BarChart3, Settings, HelpCircle,
   Search, Bell, Plus, Sparkles, Globe, UserPlus, Play, Upload, Zap, BarChart2,
   Link2, Wand2, X, Video, Library, ChevronRight, Menu, ArrowLeft, Loader2, Check,
   RefreshCw, Eye, Download, Film, Clock, MessageCircle, Trash2, MoreVertical,
   CreditCard, AlertCircle,
 } from 'lucide-react';
 import RiftFeedbackButton from '@/components/RiftFeedbackButton';
+import Sidebar, { UserProfileData } from '@/components/Sidebar';
 
 type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
@@ -27,33 +27,6 @@ interface VideoData {
   scene_type: string | null;
   rift_used: boolean;
   error_message: string | null;
-}
-
-interface UserProfileData {
-  credits_balance: number;
-  credits_lifetime_purchased: number;
-  credits_lifetime_used: number;
-  subscription_tier: 'free' | 'creator' | 'pro' | 'team';
-  subscription_status: string;
-}
-
-// Tier max credits for progress bar display
-function getMaxCreditsForTier(tier: string): number {
-  switch (tier) {
-    case 'creator': return 50;
-    case 'pro': return 150;
-    case 'team': return 500;
-    default: return 5; // free tier base
-  }
-}
-
-function getTierLabel(tier: string): string {
-  switch (tier) {
-    case 'creator': return 'Creator';
-    case 'pro': return 'Pro';
-    case 'team': return 'Team';
-    default: return 'Free';
-  }
 }
 
 function formatRelativeTime(iso: string): string {
@@ -85,102 +58,9 @@ async function downloadVideo(url: string, filename: string) {
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-  } catch (err) {
+  } catch {
     window.open(url, '_blank');
   }
-}
-
-function Sidebar({ open, onClose, profile }: { open: boolean; onClose: () => void; profile: UserProfileData | null }) {
-  const { user } = useUser();
-  const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
-
-  const navItems = [
-    { name: 'Home', icon: Home, href: '/' },
-    { name: 'Projects', icon: FolderClosed, href: '/library' },
-    { name: 'Avatars', icon: UserSquare2, href: '#' },
-    { name: 'Voices', icon: Mic, href: '#' },
-    { name: 'Brand Kit', icon: Palette, href: '#' },
-    { name: 'Analytics', icon: BarChart3, href: '#' },
-  ];
-  const bottomItems = [{ name: 'Settings', icon: Settings }, { name: 'Help', icon: HelpCircle }];
-
-  const credits = profile?.credits_balance ?? 0;
-  const tier = profile?.subscription_tier ?? 'free';
-  const maxCredits = getMaxCreditsForTier(tier);
-  const tierLabel = getTierLabel(tier);
-  const progressPct = maxCredits > 0 ? Math.min(100, (credits / maxCredits) * 100) : 0;
-
-  return (
-    <>
-      <div onClick={onClose} className={`fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} aria-hidden="true" />
-      <aside className={`fixed left-0 top-0 h-screen w-64 border-r border-[#141821] bg-[#07070a]/95 backdrop-blur-xl z-40 flex flex-col transition-transform duration-300 ease-apple ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
-        <div className="px-6 pt-6 pb-8 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2.5">
-            <div className="relative w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-lg shadow-purple-500/20">
-              <Play className="w-4 h-4 text-white fill-white" strokeWidth={0} />
-            </div>
-            <span className="text-[17px] font-semibold tracking-tight">Riftvid</span>
-          </Link>
-          <button onClick={onClose} className="lg:hidden p-1.5 rounded-lg hover:bg-white/[0.05] transition-colors" aria-label="Close sidebar">
-            <X className="w-4 h-4 text-zinc-400" strokeWidth={2} />
-          </button>
-        </div>
-        <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
-          <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">Workspace</div>
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = item.name === 'Home';
-            return (
-              <Link key={item.name} href={item.href} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] transition-all duration-200 ${isActive ? 'bg-white/[0.06] text-white shadow-sm' : 'text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200'}`}>
-                <Icon className={`w-[18px] h-[18px] ${isActive ? 'text-purple-400' : ''}`} strokeWidth={1.75} />
-                <span className="font-medium">{item.name}</span>
-                {isActive && <span className="ml-auto w-1 h-1 rounded-full bg-purple-400" />}
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="px-3 pb-3">
-          <div className="rounded-xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.04] p-4 relative overflow-hidden">
-            <div className="relative z-10">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[12px] font-medium text-zinc-300">Credits</span>
-                <span className="text-[11px] text-zinc-500">{credits}{maxCredits > 0 && ` / ${maxCredits}`}</span>
-              </div>
-              <div className="h-1 rounded-full bg-white/[0.04] overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-purple-400 to-blue-400 rounded-full transition-all duration-500" style={{ width: `${progressPct}%` }} />
-              </div>
-              <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">
-                {credits === 0 ? 'Get more credits' : 'Upgrade plan'}
-              </button>
-            </div>
-          </div>
-        </div>
-        <div className="px-3 pb-3 space-y-0.5 border-t border-[#141821] pt-3">
-          {bottomItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button key={item.name} className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] text-zinc-400 hover:bg-white/[0.03] hover:text-zinc-200 transition-all">
-                <Icon className="w-[18px] h-[18px]" strokeWidth={1.75} />
-                <span className="font-medium">{item.name}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="px-3 pb-4">
-          <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.03] transition-colors">
-            <UserButton appearance={{ elements: { avatarBox: 'w-9 h-9 shadow-md shadow-purple-500/20' } }} />
-            <div className="flex-1 text-left min-w-0">
-              <div className="text-[13px] font-medium text-white truncate">{displayName}</div>
-              <div className="text-[11px] text-zinc-500 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                {tierLabel}
-              </div>
-            </div>
-          </div>
-        </div>
-      </aside>
-    </>
-  );
 }
 
 function Topbar({ onNewGeneration, onToggleSidebar }: { onNewGeneration: () => void; onToggleSidebar: () => void }) {
@@ -222,15 +102,15 @@ function HeroCard({ onNewGeneration, totalJobs, profile }: { onNewGeneration: ()
       <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-blue-500/15 blur-[100px] opacity-50" />
       <div className="relative z-10 max-w-2xl">
         <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/15 border border-purple-500/20 text-[10px] font-semibold uppercase tracking-wider text-purple-300 mb-5">
-          <Sparkles className="w-3 h-3" strokeWidth={2} />
-          Riftvid Studio
+          <Zap className="w-3 h-3" strokeWidth={2} />
+          Quick Generation
         </div>
         <h1 className="text-[28px] sm:text-[36px] md:text-[44px] font-semibold tracking-tight leading-[1.1] text-white mb-3">
           Create Cinematic Magic,{' '}
           <span className="bg-gradient-to-r from-purple-300 to-blue-300 bg-clip-text text-transparent">{displayName}.</span>
         </h1>
         <p className="text-[14px] sm:text-[15px] text-zinc-400 leading-relaxed mb-6 sm:mb-8 max-w-lg">
-          The ultimate AI motion engine at your fingertips. Upload an image, describe the motion, and watch it come alive.
+          Generate AI videos in seconds from prompts, images, or ideas.
         </p>
         <div className="flex items-center gap-6 sm:gap-8 mb-6 sm:mb-8">
           <div className="flex items-center gap-2.5">
@@ -378,17 +258,9 @@ function VideoPreviewModal({ video, onClose, onDownload }: { video: VideoData | 
           </div>
         </div>
         {video.generated_video_url ? (
-          <video
-  src={video.generated_video_url}
-  poster={video.source_image_url}
-  controls
-  autoPlay
-  loop
-  preload="metadata"
-  className="w-full aspect-video bg-black"
->
-  Your browser does not support video playback.
-</video>
+          <video src={video.generated_video_url} poster={video.source_image_url} controls autoPlay loop preload="metadata" className="w-full aspect-video bg-black">
+            Your browser does not support video playback.
+          </video>
         ) : video.status === 'failed' ? (
           <div className="aspect-video bg-rose-500/[0.04] flex flex-col items-center justify-center gap-2 px-5 text-center">
             <div className="text-[14px] font-medium text-rose-200">Generation failed</div>
@@ -607,7 +479,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
         setGenMode('completed'); setGenProgress(100); setGeneratedVideoUrl(data.videoUrl);
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
         onGenerationComplete();
-        onProfileUpdate(); // refresh credits in case anything changed
+        onProfileUpdate();
       } else if (data.status === 'processing') {
         setGenMode('processing'); setGenProgress(data.progress || 50);
         if (data.logs) setGenLogs(data.logs);
@@ -617,7 +489,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
         setGenMode('failed'); setGenError(data.error || 'Video generation failed');
         if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
         onGenerationComplete();
-        onProfileUpdate(); // refresh credits — they were refunded!
+        onProfileUpdate();
       }
     } catch (err) { console.error('Polling error:', err); }
   };
@@ -657,17 +529,15 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
 
       const created = await createRes.json();
 
-      // Handle 402 Payment Required (out of credits)
       if (createRes.status === 402 || created.out_of_credits) {
         setGenMode('idle');
         setOutOfCredits(true);
-        onProfileUpdate(); // refresh balance
+        onProfileUpdate();
         return;
       }
 
       if (!createRes.ok) throw new Error(created.error || 'Failed to create video record');
 
-      // Update profile with new balance from response
       onProfileUpdate();
 
       const genRes = await fetch('/api/generate-video', {
@@ -748,7 +618,6 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
             </button>
           </div>
 
-          {/* OUT OF CREDITS */}
           {outOfCredits && (
             <div className="mb-5 rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] p-6 text-center">
               <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
@@ -771,16 +640,9 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
           {genMode === 'completed' && generatedVideoUrl && (
             <div className="mb-5">
               <div className="relative rounded-xl overflow-hidden border border-purple-500/30 bg-black">
-                <video
-  src={generatedVideoUrl}
-  controls
-  autoPlay
-  loop
-  preload="metadata"
-  className="w-full aspect-video"
->
-  Your browser does not support video playback.
-</video>
+                <video src={generatedVideoUrl} controls autoPlay loop preload="metadata" className="w-full aspect-video">
+                  Your browser does not support video playback.
+                </video>
               </div>
               <div className="mt-3 flex items-center gap-2 text-[12px] text-zinc-400">
                 <Check className="w-3.5 h-3.5 text-emerald-400" strokeWidth={2.5} />
@@ -917,23 +779,23 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
                 {(chatMode === 'idle' || chatMode === 'done') && (
                   <>
                     {chatMode === 'done' && finalAcknowledgment && (
-  <div className="mb-3 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/20">
-    <div className="w-6 h-6 rounded-md bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 mt-0.5">
-      <Sparkles className="w-3 h-3 text-white" strokeWidth={2} />
-    </div>
-    <div className="flex-1 text-[13px] text-zinc-200 leading-relaxed">{finalAcknowledgment}</div>
-    <RiftFeedbackButton
-      basePrompt={basePrompt}
-      imageDescription={imageDescription || undefined}
-      questionText={`FINAL PROMPT: ${prompt}`}
-      questionOptions={answers}
-      questionStep={totalSteps + 1}
-      totalSteps={totalSteps}
-      targetGap="final_prompt"
-      riftVersion="v3"
-    />
-  </div>
-)}
+                      <div className="mb-3 flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] border border-purple-500/20">
+                        <div className="w-6 h-6 rounded-md bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                          <Sparkles className="w-3 h-3 text-white" strokeWidth={2} />
+                        </div>
+                        <div className="flex-1 text-[13px] text-zinc-200 leading-relaxed">{finalAcknowledgment}</div>
+                        <RiftFeedbackButton
+                          basePrompt={basePrompt}
+                          imageDescription={imageDescription || undefined}
+                          questionText={`FINAL PROMPT: ${prompt}`}
+                          questionOptions={answers}
+                          questionStep={totalSteps + 1}
+                          totalSteps={totalSteps}
+                          targetGap="final_prompt"
+                          riftVersion="v3"
+                        />
+                      </div>
+                    )}
                     <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={chatMode === 'done' ? 6 : 3} placeholder={aiOptimization ? "Describe your video idea... Rift will refine it for you" : "Write your full cinematic prompt here..."} className="w-full px-4 py-3 bg-white/[0.03] border border-[#1f2937] rounded-xl text-[14px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.05] transition-all resize-none" />
                   </>
                 )}
@@ -972,32 +834,32 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
                       </div>
                     )}
                     <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-5">
-                     <div className="flex items-start gap-3 mb-4">
-  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
-    <Sparkles className="w-4 h-4 text-white" strokeWidth={2} />
-  </div>
-  <div className="flex-1 pt-1">
-    <div className="flex items-center justify-between gap-2 mb-1">
-      <div className="flex items-center gap-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-300">Rift Assistant</div>
-        <div className="flex items-center gap-1 text-[10px] text-zinc-500">
-          <MessageCircle className="w-2.5 h-2.5" strokeWidth={2} />
-          <span>{step + 1} of {totalSteps}</span>
-        </div>
-      </div>
-      <RiftFeedbackButton
-        basePrompt={basePrompt}
-        imageDescription={imageDescription || undefined}
-        questionText={currentQuestion.question}
-        questionOptions={currentQuestion.options}
-        questionStep={step + 1}
-        totalSteps={totalSteps}
-        riftVersion="v3"
-      />
-    </div>
-    <div className="text-[15px] font-medium text-white leading-snug">{currentQuestion.question}</div>
-  </div>
-</div>
+                      <div className="flex items-start gap-3 mb-4">
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/30">
+                          <Sparkles className="w-4 h-4 text-white" strokeWidth={2} />
+                        </div>
+                        <div className="flex-1 pt-1">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <div className="flex items-center gap-2">
+                              <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-300">Rift Assistant</div>
+                              <div className="flex items-center gap-1 text-[10px] text-zinc-500">
+                                <MessageCircle className="w-2.5 h-2.5" strokeWidth={2} />
+                                <span>{step + 1} of {totalSteps}</span>
+                              </div>
+                            </div>
+                            <RiftFeedbackButton
+                              basePrompt={basePrompt}
+                              imageDescription={imageDescription || undefined}
+                              questionText={currentQuestion.question}
+                              questionOptions={currentQuestion.options}
+                              questionStep={step + 1}
+                              totalSteps={totalSteps}
+                              riftVersion="v3"
+                            />
+                          </div>
+                          <div className="text-[15px] font-medium text-white leading-snug">{currentQuestion.question}</div>
+                        </div>
+                      </div>
                       <div className="grid grid-cols-2 gap-2 mb-3">
                         {currentQuestion.options.map((option, idx) => (
                           <button key={idx} onClick={() => handleAnswer(option)} className="text-left px-3 py-2.5 rounded-lg bg-white/[0.04] hover:bg-purple-500/15 border border-white/[0.06] hover:border-purple-500/40 text-[13px] font-medium text-zinc-200 hover:text-white transition-all hover:-translate-y-0.5">
@@ -1168,6 +1030,62 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
   );
 }
 
+function RiftStudioHero() {
+  return (
+    <Link href="/studio" className="block group">
+      <div className="relative rounded-3xl border border-purple-500/25 bg-gradient-to-br from-purple-500/[0.12] via-[#0a0a0b] to-blue-500/[0.08] p-6 sm:p-7 overflow-hidden transition-all duration-300 hover:border-purple-500/40 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-purple-500/20">
+        <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full bg-purple-500/15 blur-[80px]" />
+        <div className="absolute -bottom-16 -left-16 w-56 h-56 rounded-full bg-blue-500/10 blur-[80px]" />
+
+        <div className="relative z-10">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/20 border border-purple-500/30 text-[10px] font-semibold uppercase tracking-wider text-purple-200">
+              <Film className="w-3 h-3" strokeWidth={2} />
+              Rift Studio
+            </div>
+            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-gradient-to-r from-purple-500/30 to-blue-500/30 text-purple-100 border border-purple-500/40">
+              NEW
+            </span>
+          </div>
+
+          <h2 className="text-[22px] sm:text-[26px] md:text-[30px] font-semibold tracking-tight leading-tight text-white mb-2">
+            Direct Your AI Movie Production
+          </h2>
+          <p className="text-[13px] sm:text-[14px] text-zinc-400 leading-relaxed mb-5 max-w-xl">
+            Build multi-scene cinematic stories with continuity, character memory,
+            and production-ready workflows.
+          </p>
+
+          <div className="flex flex-wrap gap-2 mb-5">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+              <Link2 className="w-3 h-3 text-purple-300" strokeWidth={2} />
+              Scene Continuity
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+              <UserPlus className="w-3 h-3 text-purple-300" strokeWidth={2} />
+              Character Memory
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+              <BarChart2 className="w-3 h-3 text-purple-300" strokeWidth={2} />
+              Timeline Flow
+            </div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+              <Download className="w-3 h-3 text-purple-300" strokeWidth={2} />
+              Export Ready
+            </div>
+          </div>
+
+          <div className="inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 group-hover:from-purple-400 group-hover:to-purple-500 text-white text-[13px] sm:text-[14px] font-semibold shadow-lg shadow-purple-500/30 transition-all">
+            <Film className="w-4 h-4" strokeWidth={2.25} />
+            Enter Rift Studio
+            <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" strokeWidth={2.25} />
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -1254,7 +1172,8 @@ export default function Dashboard() {
       <main className="lg:ml-64 relative z-[1]">
         <Topbar onNewGeneration={() => setModalOpen(true)} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
-          <section className="mb-8"><HeroCard onNewGeneration={() => setModalOpen(true)} totalJobs={videos.length} profile={profile} /></section>
+          <section className="mb-6 sm:mb-8"><HeroCard onNewGeneration={() => setModalOpen(true)} totalJobs={videos.length} profile={profile} /></section>
+          <section className="mb-8 sm:mb-10"><RiftStudioHero /></section>
           <section className="mb-10 sm:mb-12">
             <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider mb-4">Studio Tools</h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

@@ -196,7 +196,7 @@ function PreviewPlayer({
 
   if (!activeClip) {
     return (
-      <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-[#1f2937] bg-gradient-to-br from-[#1a1530] via-[#0a0a0b] to-[#050505] flex items-center justify-center">
+      <div className="relative w-full h-full rounded-2xl overflow-hidden border border-[#1f2937] bg-gradient-to-br from-[#1a1530] via-[#0a0a0b] to-[#050505] flex items-center justify-center">
         <div className="text-center px-6">
           <div className="w-16 h-16 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-3 mx-auto">
             <FileVideo className="w-7 h-7 text-purple-300" strokeWidth={1.5} />
@@ -210,7 +210,7 @@ function PreviewPlayer({
 
   if (activeClip.status !== 'completed' || !activeClip.generated_video_url) {
     return (
-      <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-purple-500/30 bg-[#0a0a0b]">
+      <div className="relative w-full h-full rounded-2xl overflow-hidden border border-purple-500/30 bg-[#0a0a0b]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={activeClip.source_image_url}
@@ -384,12 +384,12 @@ function TimelineClipCard({
       onClick={onSelect}
       className={`relative shrink-0 transition-all duration-300 ease-out ${
         isActive
-          ? 'w-[120px] sm:w-[140px] scale-105 z-10'
-          : 'w-[90px] sm:w-[110px] opacity-70 hover:opacity-100'
+          ? 'w-[68px] sm:w-[80px] lg:w-[140px] scale-105 z-10'
+          : 'w-[56px] sm:w-[68px] lg:w-[110px] opacity-70 hover:opacity-100'
       }`}
     >
       <div
-        className={`relative aspect-video rounded-xl overflow-hidden border-2 transition-all duration-300 ${
+        className={`relative aspect-[9/16] lg:aspect-video rounded-xl overflow-hidden border-2 transition-all duration-300 ${
           isActive
             ? 'border-purple-400 shadow-2xl shadow-purple-500/40'
             : 'border-[#1f2937] hover:border-[#2d3748]'
@@ -1603,8 +1603,10 @@ export default function SceneStudioPage() {
 
         {/* MOBILE LAYOUT (<1024px) — stacked, scrollable */}
         <div className="lg:hidden pb-32">
+          {/* CapCut-style preview: tall portrait container, video uses object-contain
+              so any aspect ratio (9:16, 16:9, 1:1) gets letterbox/pillarbox black bars naturally */}
           <div className="px-3 sm:px-5 pt-4 sm:pt-5">
-            <div className="aspect-video">
+            <div className="h-[60vh] max-h-[640px] min-h-[420px] w-full">
               <PreviewPlayer
                 clips={scene.clips}
                 activeClipIndex={activeClipIndex}
@@ -1668,7 +1670,11 @@ export default function SceneStudioPage() {
                     </div>
                   ))}
                   <div className="w-3" />
-                  <PlusConnector onClick={handleAddClick} variant="end" hasChainOption={canChain} />
+                  {/* Hide big "Add clip" tile on mobile — replaced by floating + button below.
+                      Keeps showing on desktop where there's room. */}
+                  <div className="hidden lg:block">
+                    <PlusConnector onClick={handleAddClick} variant="end" hasChainOption={canChain} />
+                  </div>
                 </div>
               </div>
             )}
@@ -1700,6 +1706,23 @@ export default function SceneStudioPage() {
             </div>
           )}
         </div>
+
+        {/* Mobile-only floating + button (CapCut convention) — bottom-right, thumb-reachable.
+            Only renders when there's at least one clip; empty state has its own Generate button. */}
+        {scene.clips.length > 0 && (
+          <button
+            onClick={handleAddClick}
+            className="lg:hidden fixed bottom-6 right-4 z-30 w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 active:scale-90 flex items-center justify-center shadow-2xl shadow-purple-500/50 border border-purple-300/30 transition-all"
+            aria-label="Add clip"
+          >
+            <Plus className="w-6 h-6 text-white" strokeWidth={2.5} />
+            {canChain && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-blue-500 border-2 border-[#050505] flex items-center justify-center">
+                <Link2 className="w-2.5 h-2.5 text-white" strokeWidth={2.5} />
+              </span>
+            )}
+          </button>
+        )}
       </main>
 
       {/* =================== MODALS & DRAWERS =================== */}

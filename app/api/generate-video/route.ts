@@ -12,11 +12,14 @@ export const maxDuration = 60;
 // Riftvid uses Grok Imagine for native audio + video generation
 const VIDEO_MODEL = 'xai/grok-imagine-video/image-to-video';
 
+type TableMode = 'videos' | 'clips';
+
 interface GenerateVideoRequest {
-  videoId: string; // ID from /api/videos POST response
+  videoId: string; // ID from either /api/videos OR /api/projects/.../clips
   prompt: string;
   imageUrl: string;
   duration: 5 | 10;
+  tableMode?: TableMode; // 'videos' (default) or 'clips' for Sequencer
 }
 
 export async function POST(req: NextRequest) {
@@ -34,7 +37,7 @@ export async function POST(req: NextRequest) {
     }
 
     const body: GenerateVideoRequest = await req.json();
-    const { videoId, prompt, imageUrl, duration } = body;
+    const { videoId, prompt, imageUrl, duration, tableMode = 'videos' } = body;
 
     if (!videoId) {
       return NextResponse.json({ error: 'Video ID is required' }, { status: 400 });
@@ -48,27 +51,38 @@ export async function POST(req: NextRequest) {
     if (duration !== 5 && duration !== 10) {
       return NextResponse.json({ error: 'Duration must be 5 or 10 seconds' }, { status: 400 });
     }
+    if (tableMode !== 'videos' && tableMode !== 'clips') {
+      return NextResponse.json({ error: 'Invalid tableMode' }, { status: 400 });
+    }
 
     const supabase = getSupabaseAdmin();
+    const tableName = tableMode === 'clips' ? 'clips' : 'videos';
 
-    // Verify the video record exists and belongs to current user
-    const { data: video, error: verifyError } = await supabase
-      .from('videos')
+    // Verify record exists and belongs to current user
+    const { data: record, error: verifyError } = await supabase
+      .from(tableName)
       .select('id, user_id, status')
       .eq('id', videoId)
       .eq('user_id', userId)
       .single();
 
-    if (verifyError || !video) {
-      return NextResponse.json({ error: 'Video record not found' }, { status: 404 });
+    if (verifyError || !record) {
+      return NextResponse.json(
+        { error: `${tableMode === 'clips' ? 'Clip' : 'Video'} record not found` },
+        { status: 404 }
+      );
     }
 
-    if (video.status !== 'queued') {
-      return NextResponse.json({ error: 'Video already submitted or completed' }, { status: 400 });
+    if (record.status !== 'queued') {
+      return NextResponse.json(
+        { error: `${tableMode === 'clips' ? 'Clip' : 'Video'} already submitted or completed` },
+        { status: 400 }
+      );
     }
 
     console.log('Submitting to Grok Imagine:', {
       videoId,
+      tableMode,
       promptLength: prompt.length,
       duration,
       model: VIDEO_MODEL,
@@ -76,62 +90,55 @@ export async function POST(req: NextRequest) {
 
     // Submit to Fal.ai (Grok Imagine model)
     const submission = await fal.queue.submit(VIDEO_MODEL, {
-  input: {
-    prompt: prompt.trim(),
-    image_url: imageUrl,
-    duration: duration,
-    resolution: '720p',
-    aspect_ratio: 'auto', // ← FIXED
-  },
-});
-    // Update DB with fal request ID and status
-    await supabase
-      .from('videos')
+      input: {
+        prompt: prompt.trim(),
+        image_url: imageUrl,
+        duration: duration,
+        resolution: '720p',
+      },
+    });
+
+    const requestId = submission.request_id;
+
+    console.log('Fal.ai submission accepted:', { videoId, tableMode, requestId });
+
+    // Update record with the Fal.ai request ID and set status to processing
+    const { error: updateError } = await supabase
+      .from(tableName)
       .update({
-        fal_request_id: submission.request_id,
         status: 'processing',
+        fal_request_id: requestId,
       })
-      .eq('id', videoId);
+      .eq('id', videoId)
+      .eq('user_id', userId);
+
+    if (updateError) {
+      console.error('Failed to update record with request ID:', updateError);
+      // Don't fail — submission is already in queue, polling will catch it
+    }
 
     return NextResponse.json({
-      requestId: submission.request_id,
+      success: true,
+      requestId,
       videoId,
-      status: 'queued',
-      estimatedSeconds: 25, // Grok is FAST — ~17-25 seconds
+      tableMode,
+      status: 'processing',
     });
   } catch (error) {
-    console.error('=== FAL/GROK ERROR ===');
+    console.error('=== GENERATE VIDEO ERROR ===');
     console.error(error);
-    console.error('=== END FAL/GROK ERROR ===');
+    console.error('=== END GENERATE VIDEO ERROR ===');
 
     let userMessage = 'Failed to start video generation';
-
-    if (error && typeof error === 'object') {
-      const errObj = error as {
-        message?: string;
-        body?: { detail?: string | { msg?: string; loc?: string[] }[] };
-        status?: number;
-      };
-
-      if (errObj.body?.detail) {
-        if (typeof errObj.body.detail === 'string') {
-          userMessage = errObj.body.detail;
-        } else if (Array.isArray(errObj.body.detail) && errObj.body.detail.length > 0) {
-          const firstErr = errObj.body.detail[0];
-          userMessage = firstErr?.msg
-            ? `${firstErr.msg}${firstErr.loc ? ` (field: ${firstErr.loc.join('.')})` : ''}`
-            : 'Validation error from Fal.ai';
-        }
-      } else if (errObj.message) {
-        if (errObj.message.includes('credit') || errObj.message.includes('balance')) {
-          userMessage = 'Out of Fal.ai credits. Please top up.';
-        } else if (errObj.message.includes('rate limit')) {
-          userMessage = 'Too many requests. Wait a moment.';
-        } else if (errObj.message.includes('401') || errObj.message.includes('unauthorized')) {
-          userMessage = 'Fal.ai API key issue';
-        } else {
-          userMessage = errObj.message;
-        }
+    if (error instanceof Error) {
+      if (error.message.includes('rate limit')) {
+        userMessage = 'Generation rate limit hit. Try again in a moment.';
+      } else if (error.message.includes('credentials') || error.message.includes('401')) {
+        userMessage = 'Fal.ai API key issue';
+      } else if (error.message.includes('safety') || error.message.includes('moderation')) {
+        userMessage = 'Content filter triggered — try rephrasing your prompt';
+      } else {
+        userMessage = error.message;
       }
     }
 

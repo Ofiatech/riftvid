@@ -13,6 +13,8 @@ export const maxDuration = 60;
 // Must match the model used in generate-video/route.ts
 const VIDEO_MODEL = 'xai/grok-imagine-video/image-to-video';
 
+type TableMode = 'videos' | 'clips';
+
 interface StatusResponse {
   status: 'queued' | 'processing' | 'completed' | 'failed';
   progress?: number;
@@ -25,7 +27,8 @@ interface StatusResponse {
 async function persistVideoToStorage(
   falVideoUrl: string,
   userId: string,
-  videoId: string
+  recordId: string,
+  tableMode: TableMode
 ): Promise<string> {
   const supabase = getSupabaseAdmin();
 
@@ -37,7 +40,10 @@ async function persistVideoToStorage(
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  const fileName = `${userId}/${videoId}.mp4`;
+  // Use different paths for clips vs videos for clarity
+  const fileName = tableMode === 'clips'
+    ? `${userId}/clips/${recordId}/video.mp4`
+    : `${userId}/${recordId}.mp4`;
 
   const { error } = await supabase.storage
     .from('videos')
@@ -55,44 +61,60 @@ async function persistVideoToStorage(
   return urlData.publicUrl;
 }
 
+// Helper: extract last frame from video (browser-side won't work in API route,
+// so we use Fal's video URL and rely on client-side extraction via the modal later.
+// For now, we record the video URL itself; the actual last-frame extraction
+// happens via /api/clips/[clipId]/extract-frame which the modal can call.)
+async function persistLastFramePlaceholder(
+  recordId: string,
+  tableMode: TableMode
+): Promise<void> {
+  // For 'clips' table, we leave last_frame_url null at completion time.
+  // The frontend will call /api/clips/[clipId]/extract-frame to populate it
+  // when the user views the completed clip.
+  // For 'videos' table, there's no last_frame_url field, so nothing to do.
+  void recordId;
+  void tableMode;
+}
+
 // Helper: refund credits when video fails (only refund if not already refunded)
 async function handleVideoFailure(
   userId: string,
-  videoId: string,
+  recordId: string,
   duration: number,
-  errorMessage: string
+  errorMessage: string,
+  tableMode: TableMode
 ) {
   const supabase = getSupabaseAdmin();
+  const tableName = tableMode === 'clips' ? 'clips' : 'videos';
 
   // Check if already refunded by looking at transactions
   const { data: existingRefund } = await supabase
     .from('transactions')
     .select('id')
-    .eq('related_video_id', videoId)
+    .eq('related_video_id', recordId)
     .eq('type', 'refund')
     .maybeSingle();
 
   if (existingRefund) {
-    // Already refunded, don't double-refund
-    return;
+    return; // Already refunded, don't double-refund
   }
 
-  // Update video status
+  // Update record status
   await supabase
-    .from('videos')
+    .from(tableName)
     .update({
       status: 'failed',
       error_message: errorMessage,
     })
-    .eq('id', videoId);
+    .eq('id', recordId);
 
   // Refund credits
   try {
     const creditAmount = getCreditCost(duration as 5 | 10);
-    await refundCredits(userId, creditAmount, videoId, `Auto-refund: ${errorMessage}`);
+    await refundCredits(userId, creditAmount, recordId, `Auto-refund: ${errorMessage}`);
   } catch (refundError) {
     console.error('Refund failed (non-fatal):', refundError);
-    // Don't throw — we still want to return the failed status to the user
   }
 }
 
@@ -118,31 +140,39 @@ export async function GET(
       return NextResponse.json({ error: 'Request ID is required' }, { status: 400 });
     }
 
+    // Determine which table to look in (default: videos for backward compat)
+    const tableModeParam = req.nextUrl.searchParams.get('tableMode');
+    const tableMode: TableMode = tableModeParam === 'clips' ? 'clips' : 'videos';
+    const tableName = tableMode === 'clips' ? 'clips' : 'videos';
+
     const supabase = getSupabaseAdmin();
 
-    // Find the video record matching this Fal request ID + user
-    const { data: video, error: findError } = await supabase
-      .from('videos')
+    // Find the record matching this Fal request ID + user
+    const { data: record, error: findError } = await supabase
+      .from(tableName)
       .select('id, user_id, status, generated_video_url, duration')
       .eq('fal_request_id', requestId)
       .eq('user_id', userId)
       .single();
 
-    if (findError || !video) {
-      return NextResponse.json({ error: 'Video record not found' }, { status: 404 });
+    if (findError || !record) {
+      return NextResponse.json(
+        { error: `${tableMode === 'clips' ? 'Clip' : 'Video'} record not found` },
+        { status: 404 }
+      );
     }
 
     // If we already persisted the video, return the cached URL immediately
-    if (video.status === 'completed' && video.generated_video_url) {
+    if (record.status === 'completed' && record.generated_video_url) {
       return NextResponse.json({
         status: 'completed',
         progress: 100,
-        videoUrl: video.generated_video_url,
+        videoUrl: record.generated_video_url,
       } as StatusResponse);
     }
 
     // If already failed (e.g., from earlier check), return that status
-    if (video.status === 'failed') {
+    if (record.status === 'failed') {
       return NextResponse.json({
         status: 'failed',
         error: 'Generation failed (credits already refunded)',
@@ -163,7 +193,7 @@ export async function GET(
       const falVideoUrl = data?.video?.url;
 
       if (!falVideoUrl) {
-        await handleVideoFailure(userId, video.id, video.duration, 'Video generated but URL missing');
+        await handleVideoFailure(userId, record.id, record.duration, 'Video generated but URL missing', tableMode);
         return NextResponse.json({
           status: 'failed',
           error: 'Video generated but URL missing — credits refunded',
@@ -173,19 +203,23 @@ export async function GET(
       // Persist to our Storage (so the video doesn't expire from Fal CDN)
       let permanentUrl: string;
       try {
-        permanentUrl = await persistVideoToStorage(falVideoUrl, userId, video.id);
+        permanentUrl = await persistVideoToStorage(falVideoUrl, userId, record.id, tableMode);
       } catch (persistError) {
         console.error('Persist error:', persistError);
         permanentUrl = falVideoUrl; // fallback to Fal URL
       }
 
+      // Update record with completed status + video URL
       await supabase
-        .from('videos')
+        .from(tableName)
         .update({
           status: 'completed',
           generated_video_url: permanentUrl,
         })
-        .eq('id', video.id);
+        .eq('id', record.id);
+
+      // For clips, leave last_frame_url null — frontend can trigger extraction later
+      await persistLastFramePlaceholder(record.id, tableMode);
 
       return NextResponse.json({
         status: 'completed',
@@ -197,7 +231,6 @@ export async function GET(
     if (statusInfo.status === 'IN_PROGRESS') {
       const logs = (statusInfo as { logs?: { message: string }[] }).logs || [];
       const logMessages = logs.map((l) => l.message);
-      // Grok is faster, so progress moves quicker
       const estimatedProgress = Math.min(95, 25 + logMessages.length * 10);
 
       return NextResponse.json({
@@ -216,7 +249,7 @@ export async function GET(
 
     // Unknown status — mark as failed and refund
     const errorMsg = `Unexpected Fal status: ${(statusInfo as { status: string }).status}`;
-    await handleVideoFailure(userId, video.id, video.duration, errorMsg);
+    await handleVideoFailure(userId, record.id, record.duration, errorMsg, tableMode);
 
     return NextResponse.json({
       status: 'failed',

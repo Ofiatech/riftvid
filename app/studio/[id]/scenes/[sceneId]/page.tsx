@@ -7,7 +7,7 @@ import {
   Plus, Loader2, Film, ArrowLeft, MoreVertical, Edit2, Trash2,
   Clock, Sparkles, Play, Pause, Link2, Upload, Wand2, Copy,
   RefreshCw, Image as ImageIcon, Download, Share2, Volume2, Check,
-  X, Maximize2, FileVideo, AlertCircle,
+  X, Maximize2, FileVideo, AlertCircle, ChevronRight,
 } from 'lucide-react';
 import ClipGenerationModal from '@/components/ClipGenerationModal';
 
@@ -57,79 +57,144 @@ function formatTime(seconds: number): string {
 
 // =============================================================================
 // CINEMATIC PREVIEW PLAYER
+// Treats all clips as ONE continuous scene with smart preload + total duration
 // =============================================================================
 function PreviewPlayer({
-  clip,
-  clipIndex,
-  totalClips,
-  onNext,
+  clips,
+  activeClipIndex,
+  setActiveClipIndex,
+  autoPlay,
+  onSceneEnded,
 }: {
-  clip: ClipItem | null;
-  clipIndex: number;
-  totalClips: number;
-  onNext: () => void;
-  onPrev: () => void;
+  clips: ClipItem[];
+  activeClipIndex: number;
+  setActiveClipIndex: (idx: number) => void;
+  autoPlay: boolean;
+  onSceneEnded: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const preloadRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [progress, setProgress] = useState(0);
+  const [clipTime, setClipTime] = useState(0); // current time within active clip
+  const [clipDuration, setClipDuration] = useState(0); // duration of active clip
 
+  const activeClip = clips[activeClipIndex] || null;
+  const nextClip = clips[activeClipIndex + 1] || null;
+
+  // Calculate total scene metrics
+  const totalSceneDuration = clips
+    .filter((c) => c.status === 'completed')
+    .reduce((sum, c) => sum + c.duration, 0);
+
+  // Time elapsed across all clips before current one + current clip time
+  const elapsedBeforeActive = clips
+    .slice(0, activeClipIndex)
+    .filter((c) => c.status === 'completed')
+    .reduce((sum, c) => sum + c.duration, 0);
+
+  const sceneProgress = totalSceneDuration > 0
+    ? ((elapsedBeforeActive + clipTime) / totalSceneDuration) * 100
+    : 0;
+
+  // Reset state and optionally autoplay when active clip changes
   useEffect(() => {
-    setPlaying(false);
-    setCurrentTime(0);
-    setProgress(0);
-  }, [clip?.id]);
+    setClipTime(0);
+    const video = videoRef.current;
+    if (!video) return;
+    if (!activeClip?.generated_video_url || activeClip.status !== 'completed') {
+      setPlaying(false);
+      return;
+    }
+    if (autoPlay) {
+      // Small delay to let video element register the new source
+      const t = setTimeout(() => {
+        video.play().catch(() => setPlaying(false));
+      }, 80);
+      return () => clearTimeout(t);
+    }
+  }, [activeClip?.id, activeClip?.generated_video_url, activeClip?.status, autoPlay]);
 
+  // Preload next clip's video for near-seamless transitions
+  useEffect(() => {
+    const preload = preloadRef.current;
+    if (!preload || !nextClip?.generated_video_url || nextClip.status !== 'completed') return;
+    // Hidden preload element loads metadata + first frame
+    if (preload.src !== nextClip.generated_video_url) {
+      preload.src = nextClip.generated_video_url;
+      preload.load();
+    }
+  }, [nextClip?.id, nextClip?.generated_video_url, nextClip?.status]);
+
+  // Wire up video events
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const handleTimeUpdate = () => {
-      setCurrentTime(video.currentTime);
-      if (video.duration) setProgress((video.currentTime / video.duration) * 100);
-    };
-    const handleLoadedMeta = () => setDuration(video.duration);
+    const handleTimeUpdate = () => setClipTime(video.currentTime);
+    const handleLoadedMeta = () => setClipDuration(video.duration);
+    const handlePlay = () => setPlaying(true);
+    const handlePause = () => setPlaying(false);
     const handleEnded = () => {
       setPlaying(false);
-      if (clipIndex < totalClips - 1) {
-        setTimeout(() => onNext(), 300);
+      // Advance to next clip if available, otherwise tell parent scene ended
+      if (activeClipIndex < clips.length - 1) {
+        setActiveClipIndex(activeClipIndex + 1);
+      } else {
+        onSceneEnded();
       }
     };
 
     video.addEventListener('timeupdate', handleTimeUpdate);
     video.addEventListener('loadedmetadata', handleLoadedMeta);
     video.addEventListener('ended', handleEnded);
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
 
     return () => {
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('loadedmetadata', handleLoadedMeta);
       video.removeEventListener('ended', handleEnded);
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
     };
-  }, [clipIndex, totalClips, onNext]);
+  }, [activeClipIndex, clips.length, setActiveClipIndex, onSceneEnded]);
 
   const togglePlay = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (playing) {
-      video.pause();
-      setPlaying(false);
-    } else {
-      video.play();
-      setPlaying(true);
+    if (playing) video.pause();
+    else video.play().catch(() => {});
+  };
+
+  const handleSceneScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (totalSceneDuration === 0) return;
+    const targetSceneTime = (parseFloat(e.target.value) / 100) * totalSceneDuration;
+    // Find which clip this time falls in
+    let runningTotal = 0;
+    for (let i = 0; i < clips.length; i++) {
+      const clip = clips[i];
+      if (clip.status !== 'completed') continue;
+      if (targetSceneTime <= runningTotal + clip.duration) {
+        // Target is in this clip
+        const timeInClip = targetSceneTime - runningTotal;
+        if (i !== activeClipIndex) {
+          setActiveClipIndex(i);
+          // Wait for clip switch then seek
+          setTimeout(() => {
+            const video = videoRef.current;
+            if (video) video.currentTime = timeInClip;
+          }, 100);
+        } else {
+          const video = videoRef.current;
+          if (video) video.currentTime = timeInClip;
+        }
+        return;
+      }
+      runningTotal += clip.duration;
     }
   };
 
-  const handleScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const video = videoRef.current;
-    if (!video || !duration) return;
-    const newTime = (parseFloat(e.target.value) / 100) * duration;
-    video.currentTime = newTime;
-    setProgress(parseFloat(e.target.value));
-  };
-
-  if (!clip) {
+  if (!activeClip) {
     return (
       <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-[#1f2937] bg-gradient-to-br from-[#1a1530] via-[#0a0a0b] to-[#050505] flex items-center justify-center">
         <div className="text-center px-6">
@@ -143,25 +208,25 @@ function PreviewPlayer({
     );
   }
 
-  if (clip.status !== 'completed' || !clip.generated_video_url) {
+  if (activeClip.status !== 'completed' || !activeClip.generated_video_url) {
     return (
       <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-purple-500/30 bg-[#0a0a0b]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={clip.source_image_url}
+          src={activeClip.source_image_url}
           alt="Clip preview"
           className="w-full h-full object-cover opacity-50"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          {clip.status === 'failed' ? (
+          {activeClip.status === 'failed' ? (
             <>
               <div className="w-14 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center mb-3">
                 <AlertCircle className="w-6 h-6 text-rose-300" strokeWidth={1.75} />
               </div>
               <div className="text-[14px] font-semibold text-rose-200 mb-1">Generation failed</div>
               <div className="text-[11px] text-zinc-400 max-w-xs text-center px-4">
-                {clip.error_message || 'Something went wrong'}
+                {activeClip.error_message || 'Something went wrong'}
               </div>
               <div className="text-[10px] text-emerald-300 mt-2 flex items-center gap-1">
                 <Check className="w-3 h-3" strokeWidth={2.5} />
@@ -172,10 +237,10 @@ function PreviewPlayer({
             <>
               <Loader2 className="w-12 h-12 text-purple-300 animate-spin mb-3" strokeWidth={1.75} />
               <div className="text-[14px] font-semibold text-white mb-1">
-                {clip.status === 'processing' ? 'Rendering clip...' : 'In queue...'}
+                {activeClip.status === 'processing' ? 'Rendering clip...' : 'In queue...'}
               </div>
               <div className="text-[11px] text-purple-300">
-                Clip {clipIndex + 1} of {totalClips}
+                Clip {activeClipIndex + 1} of {clips.length}
               </div>
             </>
           )}
@@ -185,14 +250,24 @@ function PreviewPlayer({
   }
 
   return (
-    <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-[#1f2937] bg-black group">
+    <div className="relative w-full h-full rounded-2xl overflow-hidden border border-[#1f2937] bg-black group">
       <video
         ref={videoRef}
-        src={clip.generated_video_url}
-        poster={clip.source_image_url}
+        src={activeClip.generated_video_url}
+        poster={activeClip.source_image_url}
         className="w-full h-full object-contain"
         playsInline
+        preload="auto"
         onClick={togglePlay}
+      />
+
+      {/* Hidden preload element — loads next clip's metadata + first frame in background */}
+      <video
+        ref={preloadRef}
+        muted
+        playsInline
+        preload="auto"
+        className="hidden"
       />
 
       {/* Center play button overlay */}
@@ -210,30 +285,45 @@ function PreviewPlayer({
       {/* Clip indicator (top-left) */}
       <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[10px] font-semibold text-white">
         <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-        Clip {clipIndex + 1} of {totalClips}
+        Clip {activeClipIndex + 1} of {clips.length}
       </div>
 
-      {/* Player controls (bottom) */}
+      {/* Player controls (bottom) — scrubber spans ENTIRE scene */}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 sm:p-4">
-        {/* Scrub bar */}
-        <div className="relative h-1 mb-2.5 group/scrub">
+        {/* Scene-wide scrub bar with clip dividers */}
+        <div className="relative h-1.5 mb-2.5 group/scrub">
           <input
             type="range"
             min="0"
             max="100"
             step="0.1"
-            value={progress}
-            onChange={handleScrub}
+            value={sceneProgress}
+            onChange={handleSceneScrub}
             className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
           />
           <div className="absolute inset-0 rounded-full bg-white/15" />
+          {/* Clip divider ticks */}
+          {clips
+            .filter((c) => c.status === 'completed')
+            .map((clip, idx, arr) => {
+              if (idx === arr.length - 1) return null;
+              const beforeDuration = arr.slice(0, idx + 1).reduce((s, c) => s + c.duration, 0);
+              const tickPct = (beforeDuration / totalSceneDuration) * 100;
+              return (
+                <div
+                  key={clip.id}
+                  className="absolute top-0 bottom-0 w-px bg-black/50"
+                  style={{ left: `${tickPct}%` }}
+                />
+              );
+            })}
           <div
             className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-purple-400 to-blue-400 transition-all duration-100"
-            style={{ width: `${progress}%` }}
+            style={{ width: `${sceneProgress}%` }}
           />
           <div
             className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg opacity-0 group-hover/scrub:opacity-100 transition-opacity"
-            style={{ left: `calc(${progress}% - 6px)` }}
+            style={{ left: `calc(${sceneProgress}% - 6px)` }}
           />
         </div>
 
@@ -251,7 +341,7 @@ function PreviewPlayer({
               )}
             </button>
             <div className="text-[10px] text-white/90 font-mono tabular-nums">
-              {formatTime(currentTime)} / {formatTime(duration || clip.duration)}
+              {formatTime(elapsedBeforeActive + clipTime)} / {formatTime(totalSceneDuration)}
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -314,11 +404,8 @@ function TimelineClipCard({
             (e.target as HTMLImageElement).style.display = 'none';
           }}
         />
-
-        {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/30" />
 
-        {/* Clip number badge */}
         <div
           className={`absolute top-1.5 left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold border-2 transition-all ${
             isActive
@@ -329,7 +416,6 @@ function TimelineClipCard({
           {index + 1}
         </div>
 
-        {/* Status indicator */}
         {clip.status === 'processing' && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
             <Loader2 className="w-5 h-5 text-purple-300 animate-spin" strokeWidth={2} />
@@ -353,20 +439,23 @@ function TimelineClipCard({
           </div>
         )}
 
-        {/* Chain badge */}
         {clip.source_type === 'last_frame' && (
           <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-purple-500/80 backdrop-blur-md border border-white/30 flex items-center justify-center">
             <Link2 className="w-2 h-2 text-white" strokeWidth={2.5} />
           </div>
         )}
 
-        {/* Duration */}
         <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-md text-[8px] font-bold text-white border border-white/10">
           {clip.duration}s
         </div>
+
+        {isActive && clip.status === 'completed' && (
+          <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-purple-500/80 backdrop-blur-md text-[7px] font-bold text-white border border-white/20">
+            Tap to edit
+          </div>
+        )}
       </div>
 
-      {/* Active glow ring */}
       {isActive && (
         <div className="absolute -inset-1 rounded-xl bg-gradient-to-r from-purple-500/40 via-blue-500/40 to-purple-500/40 blur-md -z-10 animate-pulse" />
       )}
@@ -375,7 +464,7 @@ function TimelineClipCard({
 }
 
 // =============================================================================
-// PLUS CONNECTOR (between clips OR at end)
+// PLUS CONNECTOR
 // =============================================================================
 function PlusConnector({
   onClick,
@@ -420,7 +509,7 @@ function PlusConnector({
 }
 
 // =============================================================================
-// ADD CLIP ACTION SHEET (bottom drawer)
+// ADD CLIP ACTION SHEET — NO BLUR, drawer slides up cleanly
 // =============================================================================
 function AddClipActionSheet({
   open,
@@ -479,36 +568,45 @@ function AddClipActionSheet({
   ];
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center"
-      onClick={onClose}
-    >
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+    <>
+      {/* Tap-outside catcher — INVISIBLE, no blur, no dim */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+
+      {/* Bottom drawer — preview stays crisp above */}
       <div
-        className="relative w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl"
+        className="fixed left-0 right-0 bottom-0 z-50 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-4 sm:max-w-md sm:rounded-3xl rounded-t-3xl border-t border-x sm:border border-purple-500/20 bg-[#0a0a0b] shadow-2xl shadow-purple-500/20"
+        style={{
+          animation: 'slideUpSheet 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+          maxHeight: '60vh',
+          overflowY: 'auto',
+        }}
         onClick={(e) => e.stopPropagation()}
-        style={{ animation: 'slideUpSheet 0.3s ease-out' }}
       >
         {/* Drag handle */}
         <div className="flex justify-center pt-3 pb-1 sm:hidden">
           <div className="w-10 h-1 rounded-full bg-zinc-700" />
         </div>
 
-        <div className="p-5 sm:p-6">
-          <div className="mb-4">
-            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-2">
-              <Sparkles className="w-2.5 h-2.5" strokeWidth={2.5} />
-              Add Next Clip
+        <div className="p-4 sm:p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-1.5">
+                <Sparkles className="w-2.5 h-2.5" strokeWidth={2.5} />
+                Add Next Clip
+              </div>
+              <h2 className="text-[16px] font-semibold text-white tracking-tight">
+                How do you want to continue?
+              </h2>
             </div>
-            <h2 className="text-[18px] sm:text-[20px] font-semibold text-white tracking-tight">
-              How do you want to continue?
-            </h2>
-            <p className="text-[12px] text-zinc-400 mt-1">
-              Pick a source for your next clip in this scene.
-            </p>
+            <button
+              onClick={onClose}
+              className="w-7 h-7 rounded-lg hover:bg-white/[0.05] transition-colors flex items-center justify-center"
+            >
+              <X className="w-3.5 h-3.5 text-zinc-400" strokeWidth={2} />
+            </button>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {options.map((opt) => {
               const Icon = opt.icon;
               const colorClass = {
@@ -527,47 +625,40 @@ function AddClipActionSheet({
                     onPickAction(opt.id);
                   }}
                   disabled={opt.disabled}
-                  className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
+                  className={`w-full flex items-center gap-2.5 p-2.5 rounded-xl border transition-all text-left ${
                     opt.disabled
                       ? 'border-[#1f2937] bg-white/[0.01] opacity-40 cursor-not-allowed'
                       : 'border-[#1f2937] bg-white/[0.02] hover:bg-white/[0.05] hover:border-[#2d3748] active:scale-[0.98]'
                   }`}
                 >
                   <div
-                    className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 border ${colorClass}`}
+                    className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${colorClass}`}
                   >
-                    <Icon className="w-4 h-4" strokeWidth={2} />
+                    <Icon className="w-3.5 h-3.5" strokeWidth={2} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[13px] font-semibold text-white flex items-center gap-1.5">
+                    <div className="text-[12px] font-semibold text-white flex items-center gap-1.5">
                       {opt.title}
                       {opt.id === 'chain' && !opt.disabled && (
-                        <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-purple-500/30 text-purple-100 border border-purple-500/40">
-                          RECOMMENDED
+                        <span className="text-[7px] font-bold px-1 py-0.5 rounded-full bg-purple-500/30 text-purple-100 border border-purple-500/40">
+                          BEST
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] text-zinc-400 mt-0.5">{opt.desc}</div>
+                    <div className="text-[10px] text-zinc-400 mt-0.5">{opt.desc}</div>
                   </div>
                 </button>
               );
             })}
           </div>
-
-          <button
-            onClick={onClose}
-            className="w-full mt-4 py-2.5 rounded-xl text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors"
-          >
-            Cancel
-          </button>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
 // =============================================================================
-// CLIP ACTION DRAWER (bottom panel when clip is selected)
+// CLIP ACTION DRAWER — RICH STATS RESTORED, NO BLUR
 // =============================================================================
 function ClipActionDrawer({
   open,
@@ -632,57 +723,60 @@ function ClipActionDrawer({
   ];
 
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-end justify-center"
-      onClick={onClose}
-    >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+    <>
+      {/* Tap-outside catcher — INVISIBLE, no blur, no dim */}
+      <div className="fixed inset-0 z-30" onClick={onClose} />
+
+      {/* Bottom drawer */}
       <div
-        className="relative w-full max-w-2xl rounded-t-3xl border-t border-x border-[#1f2937] bg-[#0a0a0b] shadow-2xl max-h-[80vh] overflow-y-auto"
+        className="fixed left-0 right-0 bottom-0 z-40 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-4 sm:max-w-2xl sm:rounded-3xl rounded-t-3xl border-t border-x sm:border border-purple-500/20 bg-[#0a0a0b] shadow-2xl shadow-purple-500/20"
+        style={{
+          animation: 'slideUpSheet 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+          maxHeight: '60vh',
+          overflowY: 'auto',
+        }}
         onClick={(e) => e.stopPropagation()}
-        style={{ animation: 'slideUpSheet 0.3s ease-out' }}
       >
-        {/* Drag handle */}
         <div className="flex justify-center pt-3 pb-1">
           <div className="w-10 h-1 rounded-full bg-zinc-700" />
         </div>
 
-        <div className="p-5 sm:p-6">
+        <div className="p-4 sm:p-5">
           {/* Header */}
-          <div className="flex items-start justify-between mb-5">
-            <div className="min-w-0 flex-1 pr-3">
-              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-2">
+          <div className="flex items-start justify-between mb-4">
+            <div className="min-w-0 flex-1 pr-2">
+              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-1.5">
                 <Film className="w-2.5 h-2.5" strokeWidth={2.5} />
                 Clip {clipIndex + 1} selected
               </div>
-              <h2 className="text-[18px] font-semibold text-white tracking-tight">
+              <h2 className="text-[16px] font-semibold text-white tracking-tight">
                 Edit this clip
               </h2>
-              <p className="text-[11px] text-zinc-400 mt-1 line-clamp-2">
+              <p className="text-[11px] text-zinc-400 mt-0.5 line-clamp-2">
                 {clip.refined_prompt}
               </p>
             </div>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-white/[0.05] transition-colors shrink-0"
+              className="w-7 h-7 rounded-lg hover:bg-white/[0.05] transition-colors flex items-center justify-center shrink-0"
             >
-              <X className="w-4 h-4 text-zinc-400" strokeWidth={2} />
+              <X className="w-3.5 h-3.5 text-zinc-400" strokeWidth={2} />
             </button>
           </div>
 
-          {/* Clip stats */}
-          <div className="grid grid-cols-3 gap-2 mb-5">
-            <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2.5">
-              <div className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
+          {/* Rich stats panel — RESTORED */}
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
+              <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
                 Duration
               </div>
               <div className="text-[13px] font-bold text-white">{clip.duration}s</div>
             </div>
-            <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2.5">
-              <div className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
+            <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
+              <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
                 Source
               </div>
-              <div className="text-[11px] font-semibold text-white flex items-center gap-1">
+              <div className="text-[10px] font-semibold text-white flex items-center gap-1">
                 {clip.source_type === 'last_frame' ? (
                   <>
                     <Link2 className="w-2.5 h-2.5 text-purple-300" strokeWidth={2.5} />
@@ -701,12 +795,12 @@ function ClipActionDrawer({
                 )}
               </div>
             </div>
-            <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2.5">
-              <div className="text-[9px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
+            <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
+              <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
                 Status
               </div>
               <div
-                className={`text-[11px] font-semibold flex items-center gap-1 ${
+                className={`text-[10px] font-semibold flex items-center gap-1 ${
                   clip.status === 'completed'
                     ? 'text-emerald-300'
                     : clip.status === 'processing' || clip.status === 'queued'
@@ -734,15 +828,15 @@ function ClipActionDrawer({
             </div>
           </div>
 
-          {/* Actions grid */}
+          {/* Action grid with TITLE + DESCRIPTION (smaller) */}
           <div className="grid grid-cols-2 gap-2 mb-2">
             {actions.map((action) => {
               const Icon = action.icon;
               const colorClass = {
-                purple: 'border-purple-500/30 bg-purple-500/[0.05] text-purple-200',
-                emerald: 'border-emerald-500/30 bg-emerald-500/[0.05] text-emerald-200',
-                blue: 'border-blue-500/30 bg-blue-500/[0.05] text-blue-200',
-                amber: 'border-amber-500/30 bg-amber-500/[0.05] text-amber-200',
+                purple: 'border-purple-500/30 bg-purple-500/[0.05]',
+                emerald: 'border-emerald-500/30 bg-emerald-500/[0.05]',
+                blue: 'border-blue-500/30 bg-blue-500/[0.05]',
+                amber: 'border-amber-500/30 bg-amber-500/[0.05]',
               }[action.color];
               const iconColorClass = {
                 purple: 'text-purple-300',
@@ -759,43 +853,249 @@ function ClipActionDrawer({
                     action.onClick();
                   }}
                   disabled={action.disabled}
-                  className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
+                  className={`flex items-center gap-2 p-2.5 rounded-xl border transition-all text-left ${
                     action.disabled
                       ? 'border-[#1f2937] bg-white/[0.01] opacity-40 cursor-not-allowed'
                       : `${colorClass} hover:scale-[1.02] active:scale-95`
                   }`}
                 >
-                  <Icon className={`w-4 h-4 ${iconColorClass} shrink-0`} strokeWidth={2} />
+                  <Icon className={`w-3.5 h-3.5 ${iconColorClass} shrink-0`} strokeWidth={2} />
                   <div className="min-w-0">
-                    <div className="text-[12px] font-semibold text-white truncate">
+                    <div className="text-[11px] font-semibold text-white truncate">
                       {action.label}
                     </div>
-                    <div className="text-[10px] text-zinc-400 truncate">{action.desc}</div>
+                    <div className="text-[9px] text-zinc-400 truncate">{action.desc}</div>
                   </div>
                 </button>
               );
             })}
           </div>
 
-          {/* Delete action - separate, danger style */}
+          {/* Delete */}
           <button
             onClick={onDelete}
-            className="w-full flex items-center gap-3 p-3 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] hover:bg-rose-500/10 active:scale-[0.98] transition-all"
+            className="w-full flex items-center gap-2 p-2.5 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] hover:bg-rose-500/10 active:scale-[0.98] transition-all"
           >
-            <Trash2 className="w-4 h-4 text-rose-300 shrink-0" strokeWidth={2} />
+            <Trash2 className="w-3.5 h-3.5 text-rose-300 shrink-0" strokeWidth={2} />
             <div className="flex-1 text-left min-w-0">
-              <div className="text-[12px] font-semibold text-rose-200">Delete clip</div>
-              <div className="text-[10px] text-zinc-400">Remove from this scene</div>
+              <div className="text-[11px] font-semibold text-rose-200">Delete clip</div>
+              <div className="text-[9px] text-zinc-400">Remove from this scene</div>
             </div>
           </button>
-
-          <button
-            onClick={onClose}
-            className="w-full mt-3 py-2.5 rounded-xl text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors"
-          >
-            Done
-          </button>
         </div>
+      </div>
+    </>
+  );
+}
+
+// =============================================================================
+// DESKTOP CLIP DETAILS PANEL (right side, persistent — no drawer)
+// =============================================================================
+function DesktopClipPanel({
+  clip,
+  clipIndex,
+  totalClips,
+  onDelete,
+  onDuplicate,
+  onReplace,
+  onRegenerate,
+  onDownload,
+}: {
+  clip: ClipItem | null;
+  clipIndex: number;
+  totalClips: number;
+  onDelete: () => void;
+  onDuplicate: () => void;
+  onReplace: () => void;
+  onRegenerate: () => void;
+  onDownload: () => void;
+}) {
+  if (!clip) {
+    return (
+      <div className="h-full rounded-2xl border border-[#1f2937] bg-[#0a0a0b]/40 backdrop-blur-sm p-5 flex flex-col items-center justify-center text-center">
+        <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-3">
+          <Film className="w-5 h-5 text-purple-300" strokeWidth={1.5} />
+        </div>
+        <div className="text-[12px] font-semibold text-white mb-1">No clip selected</div>
+        <div className="text-[10px] text-zinc-400">
+          Generate a clip or select one from the timeline
+        </div>
+      </div>
+    );
+  }
+
+  const actions = [
+    {
+      id: 'regenerate',
+      icon: Sparkles,
+      label: 'Regenerate',
+      desc: 'Edit prompt & remake',
+      onClick: onRegenerate,
+      color: 'purple',
+      disabled: clip.status === 'processing' || clip.status === 'queued',
+    },
+    {
+      id: 'replace',
+      icon: RefreshCw,
+      label: 'Replace',
+      desc: 'New source image',
+      onClick: onReplace,
+      color: 'emerald',
+      disabled: clip.status === 'processing' || clip.status === 'queued',
+    },
+    {
+      id: 'duplicate',
+      icon: Copy,
+      label: 'Duplicate',
+      desc: 'Copy this clip',
+      onClick: onDuplicate,
+      color: 'blue',
+      disabled: clip.status !== 'completed',
+    },
+    {
+      id: 'download',
+      icon: Download,
+      label: 'Download',
+      desc: 'Save MP4 file',
+      onClick: onDownload,
+      color: 'amber',
+      disabled: clip.status !== 'completed',
+    },
+  ];
+
+  return (
+    <div className="h-full rounded-2xl border border-[#1f2937] bg-[#0a0a0b]/40 backdrop-blur-sm p-4 flex flex-col overflow-hidden">
+      {/* Header */}
+      <div className="mb-3">
+        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-1.5">
+          <Film className="w-2.5 h-2.5" strokeWidth={2.5} />
+          Clip {clipIndex + 1} of {totalClips}
+        </div>
+        <h3 className="text-[14px] font-semibold text-white tracking-tight">
+          Clip details
+        </h3>
+        <p className="text-[10px] text-zinc-400 mt-1 line-clamp-3 leading-relaxed">
+          {clip.refined_prompt}
+        </p>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-3 gap-1.5 mb-3">
+        <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
+          <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
+            Duration
+          </div>
+          <div className="text-[12px] font-bold text-white">{clip.duration}s</div>
+        </div>
+        <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
+          <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
+            Source
+          </div>
+          <div className="text-[10px] font-semibold text-white flex items-center gap-1">
+            {clip.source_type === 'last_frame' ? (
+              <>
+                <Link2 className="w-2.5 h-2.5 text-purple-300" strokeWidth={2.5} />
+                Chain
+              </>
+            ) : clip.source_type === 'upload' ? (
+              <>
+                <Upload className="w-2.5 h-2.5" strokeWidth={2.5} />
+                Upload
+              </>
+            ) : (
+              <>
+                <ImageIcon className="w-2.5 h-2.5" strokeWidth={2.5} />
+                Library
+              </>
+            )}
+          </div>
+        </div>
+        <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
+          <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
+            Status
+          </div>
+          <div
+            className={`text-[10px] font-semibold flex items-center gap-1 ${
+              clip.status === 'completed'
+                ? 'text-emerald-300'
+                : clip.status === 'processing' || clip.status === 'queued'
+                ? 'text-purple-300'
+                : 'text-rose-300'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                clip.status === 'completed'
+                  ? 'bg-emerald-400'
+                  : clip.status === 'processing' || clip.status === 'queued'
+                  ? 'bg-purple-400 animate-pulse'
+                  : 'bg-rose-400'
+              }`}
+            />
+            {clip.status === 'completed'
+              ? 'Ready'
+              : clip.status === 'processing'
+              ? 'Rendering'
+              : clip.status === 'queued'
+              ? 'Queued'
+              : 'Failed'}
+          </div>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="space-y-1.5 flex-1 overflow-y-auto">
+        {actions.map((action) => {
+          const Icon = action.icon;
+          const colorClass = {
+            purple: 'border-purple-500/30 bg-purple-500/[0.05]',
+            emerald: 'border-emerald-500/30 bg-emerald-500/[0.05]',
+            blue: 'border-blue-500/30 bg-blue-500/[0.05]',
+            amber: 'border-amber-500/30 bg-amber-500/[0.05]',
+          }[action.color];
+          const iconColorClass = {
+            purple: 'text-purple-300',
+            emerald: 'text-emerald-300',
+            blue: 'text-blue-300',
+            amber: 'text-amber-300',
+          }[action.color];
+
+          return (
+            <button
+              key={action.id}
+              onClick={() => {
+                if (action.disabled) return;
+                action.onClick();
+              }}
+              disabled={action.disabled}
+              className={`w-full flex items-center gap-2 p-2.5 rounded-xl border transition-all text-left ${
+                action.disabled
+                  ? 'border-[#1f2937] bg-white/[0.01] opacity-40 cursor-not-allowed'
+                  : `${colorClass} hover:scale-[1.01] active:scale-[0.99]`
+              }`}
+            >
+              <Icon className={`w-3.5 h-3.5 ${iconColorClass} shrink-0`} strokeWidth={2} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-semibold text-white truncate">
+                  {action.label}
+                </div>
+                <div className="text-[9px] text-zinc-400 truncate">{action.desc}</div>
+              </div>
+              <ChevronRight className="w-3 h-3 text-zinc-600" strokeWidth={2} />
+            </button>
+          );
+        })}
+
+        <button
+          onClick={onDelete}
+          className="w-full flex items-center gap-2 p-2.5 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] hover:bg-rose-500/10 active:scale-[0.98] transition-all"
+        >
+          <Trash2 className="w-3.5 h-3.5 text-rose-300 shrink-0" strokeWidth={2} />
+          <div className="flex-1 text-left min-w-0">
+            <div className="text-[11px] font-semibold text-rose-200">Delete clip</div>
+            <div className="text-[9px] text-zinc-400">Remove from this scene</div>
+          </div>
+        </button>
       </div>
     </div>
   );
@@ -816,7 +1116,7 @@ export default function SceneStudioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeClipIndex, setActiveClipIndex] = useState(0);
+  const [activeClipIndex, setActiveClipIndexState] = useState(0);
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [addActionSheetOpen, setAddActionSheetOpen] = useState(false);
   const [clipDrawerOpen, setClipDrawerOpen] = useState(false);
@@ -824,6 +1124,12 @@ export default function SceneStudioPage() {
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState('');
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'idle'>('saved');
+  const [autoPlayActiveClip, setAutoPlayActiveClip] = useState(false);
+
+  // Wrapped setter so we can also clear autoplay flag when user manually selects
+  const setActiveClipIndex = (idx: number) => {
+    setActiveClipIndexState(idx);
+  };
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -871,7 +1177,6 @@ export default function SceneStudioPage() {
     fetchParentProject();
   }, [fetchProfile, fetchScene, fetchParentProject]);
 
-  // Auto-refresh while clips are processing
   useEffect(() => {
     if (!scene) return;
     const hasProcessing = scene.clips.some(
@@ -882,28 +1187,46 @@ export default function SceneStudioPage() {
     return () => clearInterval(interval);
   }, [scene, fetchScene]);
 
-  // Keep active clip index in bounds when clips change
   useEffect(() => {
     if (!scene) return;
     if (scene.clips.length === 0) {
-      setActiveClipIndex(0);
+      setActiveClipIndexState(0);
     } else if (activeClipIndex >= scene.clips.length) {
-      setActiveClipIndex(scene.clips.length - 1);
+      setActiveClipIndexState(scene.clips.length - 1);
     }
   }, [scene, activeClipIndex]);
 
+  // Tap-to-select, tap-again-to-edit pattern
   const handleClipSelect = (index: number) => {
-    setActiveClipIndex(index);
-    setClipDrawerOpen(true);
+    if (index === activeClipIndex) {
+      setClipDrawerOpen(true);
+    } else {
+      setActiveClipIndexState(index);
+      setAutoPlayActiveClip(false);
+      setClipDrawerOpen(false);
+    }
+  };
+
+  // Triggered when entire scene playback completes (last clip ended)
+  const handleSceneEnded = () => {
+    setAutoPlayActiveClip(false);
+  };
+
+  // Internal setter used by PreviewPlayer to advance to next clip
+  // This setter enables autoplay so the next clip plays automatically
+  const handleAdvanceFromPlayer = (newIdx: number) => {
+    setAutoPlayActiveClip(true);
+    setActiveClipIndexState(newIdx);
   };
 
   const handleAddClick = () => {
     setAddActionSheetOpen(true);
   };
 
-  const handlePickAddAction = (_action: 'chain' | 'upload' | 'prompt' | 'url' | 'transition') => {
+  const handlePickAddAction = (
+    _action: 'chain' | 'upload' | 'prompt' | 'url' | 'transition'
+  ) => {
     setAddActionSheetOpen(false);
-    // All actions open the generation modal which has the source picker
     setGenerateModalOpen(true);
   };
 
@@ -1037,7 +1360,6 @@ export default function SceneStudioPage() {
     .find((c) => c.status === 'completed' && c.last_frame_url);
   const canChain = !!lastCompletedClip;
 
-  // Build last-frame options for the modal
   const lastFrameOptions = scene.clips
     .filter((c) => c.status === 'completed' && c.last_frame_url)
     .map((c) => ({
@@ -1048,12 +1370,12 @@ export default function SceneStudioPage() {
     }));
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white relative overflow-hidden">
+    <div className="h-screen overflow-hidden bg-[#050505] text-white relative">
       {/* Ambient cinematic background glow */}
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-purple-500/[0.06] blur-[120px] pointer-events-none" />
       <div className="fixed bottom-0 right-0 w-[400px] h-[300px] rounded-full bg-blue-500/[0.05] blur-[100px] pointer-events-none" />
 
-      {/* Local keyframes for bottom sheet slide animation */}
+      {/* Local keyframes */}
       <style jsx global>{`
         @keyframes slideUpSheet {
           from { transform: translateY(100%); opacity: 0; }
@@ -1062,9 +1384,8 @@ export default function SceneStudioPage() {
       `}</style>
 
       {/* =================== TOP BAR =================== */}
-      <div className="sticky top-0 z-30 border-b border-[#141821]/80 bg-[#050505]/80 backdrop-blur-2xl">
+      <div className="sticky top-0 z-20 border-b border-[#141821]/80 bg-[#050505]/80 backdrop-blur-2xl">
         <div className="flex items-center justify-between px-3 sm:px-5 h-14 gap-2">
-          {/* Left: Back + title */}
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <Link
               href={`/studio/${projectId}`}
@@ -1095,9 +1416,7 @@ export default function SceneStudioPage() {
                   onClick={() => setEditingName(true)}
                   className="text-left min-w-0 max-w-full block"
                 >
-                  <div className="text-[13px] font-semibold text-white truncate">
-                    {sceneName}
-                  </div>
+                  <div className="text-[13px] font-semibold text-white truncate">{sceneName}</div>
                   <div className="text-[10px] text-purple-300 flex items-center gap-1.5">
                     <span>Scene {scene.scene_order}</span>
                     <span className="w-0.5 h-0.5 rounded-full bg-zinc-600" />
@@ -1132,7 +1451,6 @@ export default function SceneStudioPage() {
             </div>
           </div>
 
-          {/* Right: Export + menu */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={() => alert('🚧 Export coming in Session 11 — ZIP all clips for CapCut import.')}
@@ -1192,104 +1510,196 @@ export default function SceneStudioPage() {
       </div>
 
       {/* =================== STUDIO BODY =================== */}
-      <main className="relative z-[1] pb-32">
-        {/* PREVIEW PLAYER */}
-        <div className="px-3 sm:px-5 pt-4 sm:pt-5">
-          <PreviewPlayer
-            clip={activeClip}
-            clipIndex={activeClipIndex}
-            totalClips={scene.clips.length}
-            onNext={() =>
-              setActiveClipIndex((prev) => Math.min(prev + 1, scene.clips.length - 1))
-            }
-            onPrev={() => setActiveClipIndex((prev) => Math.max(prev - 1, 0))}
-          />
+      {/* MOBILE: stacked, scrollable          DESKTOP: 3-column fits viewport */}
+      <main className="relative z-[1] h-[calc(100vh-3.5rem)] overflow-y-auto lg:overflow-hidden">
+        {/* DESKTOP LAYOUT (≥1024px) */}
+        <div className="hidden lg:grid lg:grid-cols-[1fr_320px] lg:grid-rows-[1fr_auto] lg:gap-3 lg:p-4 lg:h-full">
+          {/* Preview player (top-left, dominant) */}
+          <div className="row-start-1 col-start-1 min-h-0">
+            <PreviewPlayer
+              clips={scene.clips}
+              activeClipIndex={activeClipIndex}
+              setActiveClipIndex={handleAdvanceFromPlayer}
+              autoPlay={autoPlayActiveClip}
+              onSceneEnded={handleSceneEnded}
+            />
+          </div>
+
+          {/* Right panel (clip details, full-height) */}
+          <div className="row-start-1 row-span-2 col-start-2 min-h-0">
+            <DesktopClipPanel
+              clip={activeClip}
+              clipIndex={activeClipIndex}
+              totalClips={scene.clips.length}
+              onDelete={() => activeClip && handleDeleteClip(activeClip.id)}
+              onDuplicate={handleDuplicateClip}
+              onReplace={handleReplaceClip}
+              onRegenerate={handleRegenerateClip}
+              onDownload={handleDownloadClip}
+            />
+          </div>
+
+          {/* Timeline strip (bottom-left, spans below preview) */}
+          <div className="row-start-2 col-start-1 rounded-2xl border border-[#1f2937] bg-[#0a0a0b]/40 backdrop-blur-sm p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <div className="text-[10px] font-bold text-purple-300 uppercase tracking-[0.15em]">
+                  Timeline
+                </div>
+                <div className="text-[10px] text-zinc-500">
+                  {scene.clips.length} {scene.clips.length === 1 ? 'clip' : 'clips'} ·{' '}
+                  {formatTime(scene.total_duration)}
+                </div>
+              </div>
+              {canChain && (
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-[9px] font-semibold text-purple-300">
+                  <Link2 className="w-2.5 h-2.5" strokeWidth={2.5} />
+                  Chain ready
+                </div>
+              )}
+            </div>
+
+            {scene.clips.length === 0 ? (
+              <div className="rounded-xl border-2 border-dashed border-purple-500/30 bg-gradient-to-br from-purple-500/[0.05] to-blue-500/[0.02] p-5 text-center">
+                <div className="text-[13px] font-semibold text-white mb-1">Direct your first shot</div>
+                <div className="text-[10px] text-zinc-400 mb-3">
+                  Upload an image, describe the motion, and generate.
+                </div>
+                <button
+                  onClick={handleAddClick}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[11px] font-semibold shadow-lg shadow-purple-500/30 transition-all active:scale-95"
+                >
+                  <Wand2 className="w-3 h-3" strokeWidth={2.25} />
+                  Generate first clip
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <div className="flex items-center gap-0 pb-2 min-w-min">
+                  {scene.clips.map((clip, idx) => (
+                    <div key={clip.id} className="flex items-center gap-0">
+                      <TimelineClipCard
+                        clip={clip}
+                        index={idx}
+                        isActive={idx === activeClipIndex}
+                        onSelect={() => handleClipSelect(idx)}
+                      />
+                      {idx < scene.clips.length - 1 && (
+                        <PlusConnector onClick={handleAddClick} variant="between" />
+                      )}
+                    </div>
+                  ))}
+                  <div className="w-3" />
+                  <PlusConnector
+                    onClick={handleAddClick}
+                    variant="end"
+                    hasChainOption={canChain}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* TIMELINE STRIP */}
-        <div className="mt-5 sm:mt-6">
-          <div className="flex items-center justify-between px-3 sm:px-5 mb-3">
-            <div className="flex items-center gap-2">
-              <div className="text-[10px] font-bold text-purple-300 uppercase tracking-[0.15em]">
-                Timeline
-              </div>
-              <div className="text-[10px] text-zinc-500">
-                {scene.clips.length} {scene.clips.length === 1 ? 'clip' : 'clips'} ·{' '}
-                {formatTime(scene.total_duration)}
-              </div>
+        {/* MOBILE LAYOUT (<1024px) — stacked, scrollable */}
+        <div className="lg:hidden pb-32">
+          <div className="px-3 sm:px-5 pt-4 sm:pt-5">
+            <div className="aspect-video">
+              <PreviewPlayer
+                clips={scene.clips}
+                activeClipIndex={activeClipIndex}
+                setActiveClipIndex={handleAdvanceFromPlayer}
+                autoPlay={autoPlayActiveClip}
+                onSceneEnded={handleSceneEnded}
+              />
             </div>
-            {canChain && (
-              <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-[9px] font-semibold text-purple-300">
-                <Link2 className="w-2.5 h-2.5" strokeWidth={2.5} />
-                Chain ready
+          </div>
+
+          <div className="mt-5">
+            <div className="flex items-center justify-between px-3 sm:px-5 mb-3">
+              <div className="flex items-center gap-2">
+                <div className="text-[10px] font-bold text-purple-300 uppercase tracking-[0.15em]">
+                  Timeline
+                </div>
+                <div className="text-[10px] text-zinc-500">
+                  {scene.clips.length} {scene.clips.length === 1 ? 'clip' : 'clips'} ·{' '}
+                  {formatTime(scene.total_duration)}
+                </div>
+              </div>
+              {canChain && (
+                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-[9px] font-semibold text-purple-300">
+                  <Link2 className="w-2.5 h-2.5" strokeWidth={2.5} />
+                  Chain ready
+                </div>
+              )}
+            </div>
+
+            {scene.clips.length === 0 ? (
+              <div className="mx-3 sm:mx-5 rounded-2xl border-2 border-dashed border-purple-500/30 bg-gradient-to-br from-purple-500/[0.05] to-blue-500/[0.02] p-6 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center mb-3 mx-auto">
+                  <Sparkles className="w-6 h-6 text-purple-300" strokeWidth={1.75} />
+                </div>
+                <div className="text-[14px] font-semibold text-white mb-1">Direct your first shot</div>
+                <div className="text-[11px] text-zinc-400 mb-4 max-w-xs mx-auto">
+                  Upload an image, describe the motion, and Rift Studio generates your first cinematic clip.
+                </div>
+                <button
+                  onClick={handleAddClick}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[12px] font-semibold shadow-lg shadow-purple-500/30 transition-all active:scale-95"
+                >
+                  <Wand2 className="w-3.5 h-3.5" strokeWidth={2.25} />
+                  Generate first clip
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <div className="flex items-center gap-0 px-3 sm:px-5 pb-5 min-w-min">
+                  {scene.clips.map((clip, idx) => (
+                    <div key={clip.id} className="flex items-center gap-0">
+                      <TimelineClipCard
+                        clip={clip}
+                        index={idx}
+                        isActive={idx === activeClipIndex}
+                        onSelect={() => handleClipSelect(idx)}
+                      />
+                      {idx < scene.clips.length - 1 && (
+                        <PlusConnector onClick={handleAddClick} variant="between" />
+                      )}
+                    </div>
+                  ))}
+                  <div className="w-3" />
+                  <PlusConnector onClick={handleAddClick} variant="end" hasChainOption={canChain} />
+                </div>
               </div>
             )}
           </div>
 
-          {/* Empty state */}
-          {scene.clips.length === 0 ? (
-            <div className="mx-3 sm:mx-5 rounded-2xl border-2 border-dashed border-purple-500/30 bg-gradient-to-br from-purple-500/[0.05] to-blue-500/[0.02] p-6 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center mb-3 mx-auto">
-                <Sparkles className="w-6 h-6 text-purple-300" strokeWidth={1.75} />
+          {scene.clips.length === 1 && (
+            <div className="mx-3 sm:mx-5 mt-4 rounded-xl border border-purple-500/20 bg-gradient-to-r from-purple-500/[0.04] to-blue-500/[0.02] p-3 flex items-start gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0">
+                <Link2 className="w-3.5 h-3.5 text-purple-300" strokeWidth={2} />
               </div>
-              <div className="text-[14px] font-semibold text-white mb-1">
-                Direct your first shot
+              <div className="text-[11px] text-zinc-300 leading-relaxed">
+                <span className="font-semibold text-white">Tip: </span>
+                {canChain
+                  ? 'Tap "+" between clips or at the end to chain a seamless continuation from the last frame.'
+                  : 'When your clip completes, you can chain the next one from its last frame for cinematic continuity.'}
               </div>
-              <div className="text-[11px] text-zinc-400 mb-4 max-w-xs mx-auto">
-                Upload an image, describe the motion, and Rift Studio generates your first cinematic clip.
-              </div>
-              <button
-                onClick={handleAddClick}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[12px] font-semibold shadow-lg shadow-purple-500/30 transition-all active:scale-95"
-              >
-                <Wand2 className="w-3.5 h-3.5" strokeWidth={2.25} />
-                Generate first clip
-              </button>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <div className="flex items-center gap-0 px-3 sm:px-5 pb-5 min-w-min">
-                {scene.clips.map((clip, idx) => (
-                  <div key={clip.id} className="flex items-center gap-0">
-                    <TimelineClipCard
-                      clip={clip}
-                      index={idx}
-                      isActive={idx === activeClipIndex}
-                      onSelect={() => handleClipSelect(idx)}
-                    />
-                    {/* Plus between clips (skip after last clip — we add the "Add" tile at end) */}
-                    {idx < scene.clips.length - 1 && (
-                      <PlusConnector onClick={handleAddClick} variant="between" />
-                    )}
-                  </div>
-                ))}
+          )}
 
-                {/* Spacer + End "Add clip" tile */}
-                <div className="w-3" />
-                <PlusConnector
-                  onClick={handleAddClick}
-                  variant="end"
-                  hasChainOption={canChain}
-                />
+          {scene.clips.length > 1 && (
+            <div className="mx-3 sm:mx-5 mt-3 rounded-xl border border-[#1f2937] bg-white/[0.02] p-2.5 flex items-start gap-2.5">
+              <div className="w-6 h-6 rounded-md bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0 mt-0.5">
+                <Sparkles className="w-3 h-3 text-purple-300" strokeWidth={2.5} />
+              </div>
+              <div className="text-[10px] text-zinc-400 leading-relaxed">
+                <span className="text-white font-medium">Tap a clip</span> to preview,
+                <span className="text-white font-medium"> tap again</span> to edit. Clips auto-play in sequence.
               </div>
             </div>
           )}
         </div>
-
-        {/* Scene tip (only when 1 clip) */}
-        {scene.clips.length === 1 && (
-          <div className="mx-3 sm:mx-5 mt-4 rounded-xl border border-purple-500/20 bg-gradient-to-r from-purple-500/[0.04] to-blue-500/[0.02] p-3 flex items-start gap-2.5">
-            <div className="w-7 h-7 rounded-lg bg-purple-500/15 border border-purple-500/25 flex items-center justify-center shrink-0">
-              <Link2 className="w-3.5 h-3.5 text-purple-300" strokeWidth={2} />
-            </div>
-            <div className="text-[11px] text-zinc-300 leading-relaxed">
-              <span className="font-semibold text-white">Tip: </span>
-              {canChain
-                ? 'Tap "+" between clips or at the end to chain a seamless continuation from the last frame.'
-                : 'When your clip completes, you can chain the next one from its last frame for cinematic continuity.'}
-            </div>
-          </div>
-        )}
       </main>
 
       {/* =================== MODALS & DRAWERS =================== */}
@@ -1312,17 +1722,20 @@ export default function SceneStudioPage() {
         canChain={canChain}
       />
 
-      <ClipActionDrawer
-        open={clipDrawerOpen}
-        onClose={() => setClipDrawerOpen(false)}
-        clip={activeClip}
-        clipIndex={activeClipIndex}
-        onDelete={() => activeClip && handleDeleteClip(activeClip.id)}
-        onDuplicate={handleDuplicateClip}
-        onReplace={handleReplaceClip}
-        onRegenerate={handleRegenerateClip}
-        onDownload={handleDownloadClip}
-      />
+      {/* On mobile, drawer slides up. On desktop, panel is always visible — no drawer */}
+      <div className="lg:hidden">
+        <ClipActionDrawer
+          open={clipDrawerOpen}
+          onClose={() => setClipDrawerOpen(false)}
+          clip={activeClip}
+          clipIndex={activeClipIndex}
+          onDelete={() => activeClip && handleDeleteClip(activeClip.id)}
+          onDuplicate={handleDuplicateClip}
+          onReplace={handleReplaceClip}
+          onRegenerate={handleRegenerateClip}
+          onDownload={handleDownloadClip}
+        />
+      </div>
     </div>
   );
 }

@@ -10,6 +10,8 @@ import {
   X, Maximize2, FileVideo, AlertCircle, ChevronRight,
 } from 'lucide-react';
 import ClipGenerationModal from '@/components/ClipGenerationModal';
+import { useSceneMerge } from '@/lib/useSceneMerge';
+import MergeStatusBadge from '@/components/MergeStatusBadge';
 
 interface ClipItem {
   id: string;
@@ -57,7 +59,9 @@ function formatTime(seconds: number): string {
 
 // =============================================================================
 // CINEMATIC PREVIEW PLAYER
-// Treats all clips as ONE continuous scene with smart preload + total duration
+// Treats all clips as ONE continuous scene with smart preload + total duration.
+// When mergedVideoUrl is provided AND mergeReady is true → plays the merged
+// video as a single seamless file (no clip transitions at all).
 // =============================================================================
 function PreviewPlayer({
   clips,
@@ -65,12 +69,16 @@ function PreviewPlayer({
   setActiveClipIndex,
   autoPlay,
   onSceneEnded,
+  mergedVideoUrl,
+  mergeReady,
 }: {
   clips: ClipItem[];
   activeClipIndex: number;
   setActiveClipIndex: (idx: number) => void;
   autoPlay: boolean;
   onSceneEnded: () => void;
+  mergedVideoUrl?: string | null;
+  mergeReady?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
@@ -80,6 +88,10 @@ function PreviewPlayer({
 
   const activeClip = clips[activeClipIndex] || null;
   const nextClip = clips[activeClipIndex + 1] || null;
+
+  // SEAMLESS MODE: when merged video is ready, play that ONE file instead of clip-by-clip.
+  // Eliminates ALL transitions and gives true Premiere/CapCut feel.
+  const useSeamlessMerged = !!(mergeReady && mergedVideoUrl);
 
   // Calculate total scene metrics
   const totalSceneDuration = clips
@@ -114,16 +126,16 @@ function PreviewPlayer({
     }
   }, [activeClip?.id, activeClip?.generated_video_url, activeClip?.status, autoPlay]);
 
-  // Preload next clip's video for near-seamless transitions
+  // Preload next clip's video for near-seamless transitions (only used in non-merged mode)
   useEffect(() => {
+    if (useSeamlessMerged) return; // no need to preload — merged file plays as one
     const preload = preloadRef.current;
     if (!preload || !nextClip?.generated_video_url || nextClip.status !== 'completed') return;
-    // Hidden preload element loads metadata + first frame
     if (preload.src !== nextClip.generated_video_url) {
       preload.src = nextClip.generated_video_url;
       preload.load();
     }
-  }, [nextClip?.id, nextClip?.generated_video_url, nextClip?.status]);
+  }, [nextClip?.id, nextClip?.generated_video_url, nextClip?.status, useSeamlessMerged]);
 
   // Wire up video events
   useEffect(() => {
@@ -136,6 +148,11 @@ function PreviewPlayer({
     const handlePause = () => setPlaying(false);
     const handleEnded = () => {
       setPlaying(false);
+      if (useSeamlessMerged) {
+        // Merged file ended → scene ended
+        onSceneEnded();
+        return;
+      }
       // Advance to next clip if available, otherwise tell parent scene ended
       if (activeClipIndex < clips.length - 1) {
         setActiveClipIndex(activeClipIndex + 1);
@@ -157,7 +174,7 @@ function PreviewPlayer({
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
     };
-  }, [activeClipIndex, clips.length, setActiveClipIndex, onSceneEnded]);
+  }, [activeClipIndex, clips.length, setActiveClipIndex, onSceneEnded, useSeamlessMerged]);
 
   const togglePlay = () => {
     const video = videoRef.current;
@@ -169,17 +186,23 @@ function PreviewPlayer({
   const handleSceneScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (totalSceneDuration === 0) return;
     const targetSceneTime = (parseFloat(e.target.value) / 100) * totalSceneDuration;
-    // Find which clip this time falls in
+
+    // In seamless mode, just seek the single video
+    if (useSeamlessMerged) {
+      const video = videoRef.current;
+      if (video) video.currentTime = targetSceneTime;
+      return;
+    }
+
+    // In clip-by-clip mode, figure out which clip the target falls into
     let runningTotal = 0;
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i];
       if (clip.status !== 'completed') continue;
       if (targetSceneTime <= runningTotal + clip.duration) {
-        // Target is in this clip
         const timeInClip = targetSceneTime - runningTotal;
         if (i !== activeClipIndex) {
           setActiveClipIndex(i);
-          // Wait for clip switch then seek
           setTimeout(() => {
             const video = videoRef.current;
             if (video) video.currentTime = timeInClip;
@@ -208,7 +231,8 @@ function PreviewPlayer({
     );
   }
 
-  if (activeClip.status !== 'completed' || !activeClip.generated_video_url) {
+  // If we're NOT in seamless mode and active clip isn't ready, show waiting state
+  if (!useSeamlessMerged && (activeClip.status !== 'completed' || !activeClip.generated_video_url)) {
     return (
       <div className="relative w-full h-full rounded-2xl overflow-hidden border border-purple-500/30 bg-[#0a0a0b]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -249,11 +273,14 @@ function PreviewPlayer({
     );
   }
 
+  // Decide which video URL to play
+  const videoSrc = useSeamlessMerged ? mergedVideoUrl! : activeClip.generated_video_url!;
+
   return (
     <div className="relative w-full h-full rounded-2xl overflow-hidden border border-[#1f2937] bg-black group">
       <video
         ref={videoRef}
-        src={activeClip.generated_video_url}
+        src={videoSrc}
         poster={activeClip.source_image_url}
         className="w-full h-full object-contain"
         playsInline
@@ -261,7 +288,8 @@ function PreviewPlayer({
         onClick={togglePlay}
       />
 
-      {/* Hidden preload element — loads next clip's metadata + first frame in background */}
+      {/* Hidden preload element — loads next clip's metadata + first frame in background.
+          Not needed in seamless mode but doesn't hurt. */}
       <video
         ref={preloadRef}
         muted
@@ -282,10 +310,12 @@ function PreviewPlayer({
         </button>
       )}
 
-      {/* Clip indicator (top-left) */}
+      {/* Clip indicator (top-left) — shows different text in seamless mode */}
       <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[10px] font-semibold text-white">
-        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-        Clip {activeClipIndex + 1} of {clips.length}
+        <span className={`w-1.5 h-1.5 rounded-full ${useSeamlessMerged ? 'bg-emerald-400' : 'bg-purple-400 animate-pulse'}`} />
+        {useSeamlessMerged
+          ? `Seamless scene · ${clips.length} clips`
+          : `Clip ${activeClipIndex + 1} of ${clips.length}`}
       </div>
 
       {/* Player controls (bottom) — scrubber spans ENTIRE scene */}
@@ -302,7 +332,7 @@ function PreviewPlayer({
             className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
           />
           <div className="absolute inset-0 rounded-full bg-white/15" />
-          {/* Clip divider ticks */}
+          {/* Clip divider ticks — shown in both modes so user knows where clips meet */}
           {clips
             .filter((c) => c.status === 'completed')
             .map((clip, idx, arr) => {
@@ -341,7 +371,7 @@ function PreviewPlayer({
               )}
             </button>
             <div className="text-[10px] text-white/90 font-mono tabular-nums">
-              {formatTime(elapsedBeforeActive + clipTime)} / {formatTime(totalSceneDuration)}
+              {formatTime(useSeamlessMerged ? clipTime : (elapsedBeforeActive + clipTime))} / {formatTime(totalSceneDuration)}
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -1131,6 +1161,20 @@ export default function SceneStudioPage() {
     setActiveClipIndexState(idx);
   };
 
+  // === CLOUDINARY SCENE MERGE ===
+  // Auto-triggers merge in background when clips become ready.
+  // Polls status. Returns merged_video_url when ready for seamless preview.
+  const merge = useSceneMerge(
+    projectId,
+    sceneId,
+    scene?.clips.map((c) => ({
+      id: c.id,
+      status: c.status,
+      generated_video_url: c.generated_video_url,
+    })) || [],
+    { autoMerge: true, debounceMs: 3000 }
+  );
+
   const fetchProfile = useCallback(async () => {
     try {
       const res = await fetch('/api/profile');
@@ -1449,11 +1493,18 @@ export default function SceneStudioPage() {
                 </button>
               )}
             </div>
+            {/* Cloudinary merge status — shows merging/ready/failed states */}
+            <MergeStatusBadge
+              status={merge.status}
+              errorMessage={merge.errorMessage}
+              onRetry={merge.triggerMergeManually}
+              compact
+            />
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={() => alert('🚧 Export coming in Session 11 — ZIP all clips for CapCut import.')}
+              onClick={() => alert('🚧 Export coming in Session 11C — ZIP merged scenes for CapCut import.')}
               className="flex items-center gap-1.5 h-9 px-3 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[12px] font-semibold shadow-lg shadow-purple-500/30 transition-all active:scale-95"
             >
               <Share2 className="w-3 h-3" strokeWidth={2.5} />
@@ -1522,6 +1573,8 @@ export default function SceneStudioPage() {
               setActiveClipIndex={handleAdvanceFromPlayer}
               autoPlay={autoPlayActiveClip}
               onSceneEnded={handleSceneEnded}
+              mergedVideoUrl={merge.mergedVideoUrl}
+              mergeReady={merge.status === 'ready'}
             />
           </div>
 
@@ -1613,6 +1666,8 @@ export default function SceneStudioPage() {
                 setActiveClipIndex={handleAdvanceFromPlayer}
                 autoPlay={autoPlayActiveClip}
                 onSceneEnded={handleSceneEnded}
+                mergedVideoUrl={merge.mergedVideoUrl}
+                mergeReady={merge.status === 'ready'}
               />
             </div>
           </div>

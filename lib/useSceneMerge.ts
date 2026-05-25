@@ -2,30 +2,29 @@
 
 // useSceneMerge — React hook for Cloudinary scene merging
 //
-// What it does:
-// 1. Tracks merge status for a scene
-// 2. Auto-triggers merge when scene becomes ready (debounced)
-// 3. Polls merge status while processing
-// 4. Returns merged video URL when ready
+// v2 FIX (Session 11C-1 bugfix):
+// Original bug: when user reopened a scene with new clips added since last
+// merge, hook trusted the database's `merge_status='ready'` and used the
+// stale merged_video_url that only contained the old clips.
 //
-// Usage in scene editor:
-//   const merge = useSceneMerge(projectId, sceneId, clips);
-//   <PreviewPlayer
-//     clips={clips}
-//     mergedVideoUrl={merge.mergedVideoUrl}
-//     mergeStatus={merge.status}
-//   />
+// Root cause: hook compared "what clips exist now" against "what clips
+// existed when hook mounted" — but missed the case where clips were added
+// BETWEEN merges (or BETWEEN page loads).
+//
+// Fix: when hook mounts, compare merge_updated_at against newest clip's
+// created_at. If newest clip is newer than the merge, the merge is stale
+// even if the DB says 'ready' — trigger a fresh merge immediately.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 export type MergeStatus =
-  | 'idle'           // no clips yet OR initial state
-  | 'pending'        // clips exist but merge not started
-  | 'triggering'    // about to call merge API
-  | 'processing'    // Cloudinary is merging
-  | 'ready'          // merged video URL available
-  | 'failed'         // merge failed (use clip-by-clip fallback)
-  | 'stale';         // clips changed since last merge
+  | 'idle'
+  | 'pending'
+  | 'triggering'
+  | 'processing'
+  | 'ready'
+  | 'failed'
+  | 'stale';
 
 interface UseSceneMergeReturn {
   status: MergeStatus;
@@ -38,12 +37,8 @@ interface UseSceneMergeReturn {
 }
 
 interface SceneMergeOptions {
-  // Wait this many ms after the last clip-completion before triggering merge
-  // Prevents triggering 3 merges if 3 clips complete back-to-back
   debounceMs?: number;
-  // How often to poll status while merging
   pollIntervalMs?: number;
-  // Auto-trigger merge when clips become ready (default true)
   autoMerge?: boolean;
 }
 
@@ -51,16 +46,10 @@ interface ClipSnapshot {
   id: string;
   status: string;
   generated_video_url: string | null;
+  // NEW: hook now needs created_at to compare against merge_updated_at
+  created_at?: string;
 }
 
-/**
- * Hook that manages a scene's merge lifecycle.
- *
- * @param projectId - the project ID
- * @param sceneId   - the scene ID
- * @param clips     - current list of clips in the scene (for change detection)
- * @param options   - merge behavior config
- */
 export function useSceneMerge(
   projectId: string,
   sceneId: string,
@@ -83,8 +72,9 @@ export function useSceneMerge(
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastClipSignatureRef = useRef<string>('');
   const isTriggeringRef = useRef(false);
+  // NEW: track whether we've done the initial staleness check
+  const initialStalenessCheckedRef = useRef(false);
 
-  // Build a signature of completed clips — when this changes, merge is stale
   const completedClipSignature = clips
     .filter((c) => c.status === 'completed' && c.generated_video_url)
     .map((c) => `${c.id}:${c.generated_video_url}`)
@@ -95,7 +85,14 @@ export function useSceneMerge(
     (c) => c.status === 'completed' && c.generated_video_url
   ).length;
 
-  // Fetch current merge status from API
+  // Find the newest completed clip's created_at — used for staleness detection
+  const newestClipCreatedAt = clips
+    .filter((c) => c.status === 'completed' && c.generated_video_url && c.created_at)
+    .reduce<string | null>((newest, c) => {
+      if (!newest) return c.created_at!;
+      return c.created_at! > newest ? c.created_at! : newest;
+    }, null);
+
   const fetchMergeStatus = useCallback(async () => {
     try {
       const res = await fetch(
@@ -111,7 +108,6 @@ export function useSceneMerge(
     }
   }, [projectId, sceneId]);
 
-  // Trigger merge via API
   const triggerMerge = useCallback(async () => {
     if (isTriggeringRef.current) return;
     isTriggeringRef.current = true;
@@ -147,6 +143,7 @@ export function useSceneMerge(
   }, [projectId, sceneId]);
 
   // On mount + when scene changes — fetch current merge status from server
+  // AND check if it's stale relative to the newest clip's created_at
   useEffect(() => {
     let cancelled = false;
 
@@ -158,8 +155,36 @@ export function useSceneMerge(
       setLastMergedAt(data.merge_updated_at || null);
       setErrorMessage(data.merge_error || null);
 
-      // Map server status to hook status
       const serverStatus = data.merge_status;
+
+      // === STALENESS CHECK ===
+      // Even if server says 'ready', the merge might be stale because clips
+      // were added AFTER the merge completed. Compare timestamps.
+      const mergeIsStaleByTimestamp =
+        serverStatus === 'ready' &&
+        data.merge_updated_at &&
+        newestClipCreatedAt &&
+        newestClipCreatedAt > data.merge_updated_at;
+
+      if (mergeIsStaleByTimestamp) {
+        console.log(
+          '[useSceneMerge] Merge is stale by timestamp:',
+          `merge=${data.merge_updated_at}`,
+          `newest_clip=${newestClipCreatedAt}`
+        );
+        // Set status to stale and trigger a fresh merge
+        setStatus('stale');
+        if (autoMerge && !initialStalenessCheckedRef.current && completedClipCount > 0) {
+          initialStalenessCheckedRef.current = true;
+          // Trigger after a tiny delay to let React settle
+          setTimeout(() => {
+            if (!cancelled) triggerMerge();
+          }, 100);
+        }
+        return;
+      }
+
+      // Map server status to hook status (no staleness detected)
       if (serverStatus === 'ready' && data.merged_video_url) {
         setStatus('ready');
       } else if (serverStatus === 'processing') {
@@ -168,8 +193,22 @@ export function useSceneMerge(
         setStatus('failed');
       } else if (serverStatus === 'stale') {
         setStatus('stale');
+        // If server itself says stale and we have clips, trigger merge
+        if (autoMerge && !initialStalenessCheckedRef.current && completedClipCount > 0) {
+          initialStalenessCheckedRef.current = true;
+          setTimeout(() => {
+            if (!cancelled) triggerMerge();
+          }, 100);
+        }
       } else if (data.total_completed_clips > 0) {
         setStatus('pending');
+        // No merge exists yet — trigger one
+        if (autoMerge && !initialStalenessCheckedRef.current) {
+          initialStalenessCheckedRef.current = true;
+          setTimeout(() => {
+            if (!cancelled) triggerMerge();
+          }, 100);
+        }
       } else {
         setStatus('idle');
       }
@@ -178,28 +217,33 @@ export function useSceneMerge(
     return () => {
       cancelled = true;
     };
-  }, [projectId, sceneId, fetchMergeStatus]);
+  }, [
+    projectId,
+    sceneId,
+    fetchMergeStatus,
+    newestClipCreatedAt,
+    autoMerge,
+    completedClipCount,
+    triggerMerge,
+  ]);
 
-  // Update completed-clip count whenever clips change
   useEffect(() => {
     setTotalCompletedClips(completedClipCount);
   }, [completedClipCount]);
 
   // Detect clip changes — if completed clips changed, mark stale and queue merge
   useEffect(() => {
-    // Skip first render (signature initialization)
     if (lastClipSignatureRef.current === '') {
       lastClipSignatureRef.current = completedClipSignature;
       return;
     }
 
     if (lastClipSignatureRef.current === completedClipSignature) {
-      return; // no change
+      return;
     }
 
     lastClipSignatureRef.current = completedClipSignature;
 
-    // Clips changed — mark current merge as stale
     if (status === 'ready') {
       setStatus('stale');
     }
@@ -208,7 +252,6 @@ export function useSceneMerge(
     if (completedClipCount === 0) return;
     if (isTriggeringRef.current) return;
 
-    // Debounce: wait `debounceMs` after the last clip change before triggering
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -263,7 +306,6 @@ export function useSceneMerge(
     };
   }, [status, fetchMergeStatus, pollIntervalMs]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);

@@ -12,6 +12,7 @@ import {
 import ClipGenerationModal from '@/components/ClipGenerationModal';
 import { useSceneMerge } from '@/lib/useSceneMerge';
 import MergeStatusBadge from '@/components/MergeStatusBadge';
+import LastFrameExtractor from '@/components/LastFrameExtractor';
 
 interface ClipItem {
   id: string;
@@ -83,22 +84,19 @@ function PreviewPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
-  const [clipTime, setClipTime] = useState(0); // current time within active clip
-  const [clipDuration, setClipDuration] = useState(0); // duration of active clip
+  const [clipTime, setClipTime] = useState(0);
+  const [clipDuration, setClipDuration] = useState(0);
 
   const activeClip = clips[activeClipIndex] || null;
   const nextClip = clips[activeClipIndex + 1] || null;
 
   // SEAMLESS MODE: when merged video is ready, play that ONE file instead of clip-by-clip.
-  // Eliminates ALL transitions and gives true Premiere/CapCut feel.
   const useSeamlessMerged = !!(mergeReady && mergedVideoUrl);
 
-  // Calculate total scene metrics
   const totalSceneDuration = clips
     .filter((c) => c.status === 'completed')
     .reduce((sum, c) => sum + c.duration, 0);
 
-  // Time elapsed across all clips before current one + current clip time
   const elapsedBeforeActive = clips
     .slice(0, activeClipIndex)
     .filter((c) => c.status === 'completed')
@@ -108,7 +106,6 @@ function PreviewPlayer({
     ? ((elapsedBeforeActive + clipTime) / totalSceneDuration) * 100
     : 0;
 
-  // Reset state and optionally autoplay when active clip changes
   useEffect(() => {
     setClipTime(0);
     const video = videoRef.current;
@@ -118,7 +115,6 @@ function PreviewPlayer({
       return;
     }
     if (autoPlay) {
-      // Small delay to let video element register the new source
       const t = setTimeout(() => {
         video.play().catch(() => setPlaying(false));
       }, 80);
@@ -126,9 +122,8 @@ function PreviewPlayer({
     }
   }, [activeClip?.id, activeClip?.generated_video_url, activeClip?.status, autoPlay]);
 
-  // Preload next clip's video for near-seamless transitions (only used in non-merged mode)
   useEffect(() => {
-    if (useSeamlessMerged) return; // no need to preload — merged file plays as one
+    if (useSeamlessMerged) return;
     const preload = preloadRef.current;
     if (!preload || !nextClip?.generated_video_url || nextClip.status !== 'completed') return;
     if (preload.src !== nextClip.generated_video_url) {
@@ -137,7 +132,6 @@ function PreviewPlayer({
     }
   }, [nextClip?.id, nextClip?.generated_video_url, nextClip?.status, useSeamlessMerged]);
 
-  // Wire up video events
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -149,11 +143,9 @@ function PreviewPlayer({
     const handleEnded = () => {
       setPlaying(false);
       if (useSeamlessMerged) {
-        // Merged file ended → scene ended
         onSceneEnded();
         return;
       }
-      // Advance to next clip if available, otherwise tell parent scene ended
       if (activeClipIndex < clips.length - 1) {
         setActiveClipIndex(activeClipIndex + 1);
       } else {
@@ -187,14 +179,12 @@ function PreviewPlayer({
     if (totalSceneDuration === 0) return;
     const targetSceneTime = (parseFloat(e.target.value) / 100) * totalSceneDuration;
 
-    // In seamless mode, just seek the single video
     if (useSeamlessMerged) {
       const video = videoRef.current;
       if (video) video.currentTime = targetSceneTime;
       return;
     }
 
-    // In clip-by-clip mode, figure out which clip the target falls into
     let runningTotal = 0;
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i];
@@ -231,7 +221,6 @@ function PreviewPlayer({
     );
   }
 
-  // If we're NOT in seamless mode and active clip isn't ready, show waiting state
   if (!useSeamlessMerged && (activeClip.status !== 'completed' || !activeClip.generated_video_url)) {
     return (
       <div className="relative w-full h-full rounded-2xl overflow-hidden border border-purple-500/30 bg-[#0a0a0b]">
@@ -273,7 +262,6 @@ function PreviewPlayer({
     );
   }
 
-  // Decide which video URL to play
   const videoSrc = useSeamlessMerged ? mergedVideoUrl! : activeClip.generated_video_url!;
 
   return (
@@ -288,8 +276,6 @@ function PreviewPlayer({
         onClick={togglePlay}
       />
 
-      {/* Hidden preload element — loads next clip's metadata + first frame in background.
-          Not needed in seamless mode but doesn't hurt. */}
       <video
         ref={preloadRef}
         muted
@@ -298,7 +284,6 @@ function PreviewPlayer({
         className="hidden"
       />
 
-      {/* Center play button overlay */}
       {!playing && (
         <button
           onClick={togglePlay}
@@ -310,7 +295,6 @@ function PreviewPlayer({
         </button>
       )}
 
-      {/* Clip indicator (top-left) — shows different text in seamless mode */}
       <div className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 text-[10px] font-semibold text-white">
         <span className={`w-1.5 h-1.5 rounded-full ${useSeamlessMerged ? 'bg-emerald-400' : 'bg-purple-400 animate-pulse'}`} />
         {useSeamlessMerged
@@ -318,9 +302,7 @@ function PreviewPlayer({
           : `Clip ${activeClipIndex + 1} of ${clips.length}`}
       </div>
 
-      {/* Player controls (bottom) — scrubber spans ENTIRE scene */}
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 sm:p-4">
-        {/* Scene-wide scrub bar with clip dividers */}
         <div className="relative h-1.5 mb-2.5 group/scrub">
           <input
             type="range"
@@ -332,7 +314,6 @@ function PreviewPlayer({
             className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
           />
           <div className="absolute inset-0 rounded-full bg-white/15" />
-          {/* Clip divider ticks — shown in both modes so user knows where clips meet */}
           {clips
             .filter((c) => c.status === 'completed')
             .map((clip, idx, arr) => {
@@ -357,7 +338,6 @@ function PreviewPlayer({
           />
         </div>
 
-        {/* Controls row */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <button
@@ -599,10 +579,8 @@ function AddClipActionSheet({
 
   return (
     <>
-      {/* Tap-outside catcher — INVISIBLE, no blur, no dim */}
       <div className="fixed inset-0 z-40" onClick={onClose} />
 
-      {/* Bottom drawer — preview stays crisp above */}
       <div
         className="fixed left-0 right-0 bottom-0 z-50 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-4 sm:max-w-md sm:rounded-3xl rounded-t-3xl border-t border-x sm:border border-purple-500/20 bg-[#0a0a0b] shadow-2xl shadow-purple-500/20"
         style={{
@@ -612,7 +590,6 @@ function AddClipActionSheet({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Drag handle */}
         <div className="flex justify-center pt-3 pb-1 sm:hidden">
           <div className="w-10 h-1 rounded-full bg-zinc-700" />
         </div>
@@ -754,10 +731,8 @@ function ClipActionDrawer({
 
   return (
     <>
-      {/* Tap-outside catcher — INVISIBLE, no blur, no dim */}
       <div className="fixed inset-0 z-30" onClick={onClose} />
 
-      {/* Bottom drawer */}
       <div
         className="fixed left-0 right-0 bottom-0 z-40 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 sm:bottom-4 sm:max-w-2xl sm:rounded-3xl rounded-t-3xl border-t border-x sm:border border-purple-500/20 bg-[#0a0a0b] shadow-2xl shadow-purple-500/20"
         style={{
@@ -772,7 +747,6 @@ function ClipActionDrawer({
         </div>
 
         <div className="p-4 sm:p-5">
-          {/* Header */}
           <div className="flex items-start justify-between mb-4">
             <div className="min-w-0 flex-1 pr-2">
               <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-1.5">
@@ -794,7 +768,6 @@ function ClipActionDrawer({
             </button>
           </div>
 
-          {/* Rich stats panel — RESTORED */}
           <div className="grid grid-cols-3 gap-2 mb-4">
             <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
               <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
@@ -858,7 +831,6 @@ function ClipActionDrawer({
             </div>
           </div>
 
-          {/* Action grid with TITLE + DESCRIPTION (smaller) */}
           <div className="grid grid-cols-2 gap-2 mb-2">
             {actions.map((action) => {
               const Icon = action.icon;
@@ -901,7 +873,6 @@ function ClipActionDrawer({
             })}
           </div>
 
-          {/* Delete */}
           <button
             onClick={onDelete}
             className="w-full flex items-center gap-2 p-2.5 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] hover:bg-rose-500/10 active:scale-[0.98] transition-all"
@@ -995,7 +966,6 @@ function DesktopClipPanel({
 
   return (
     <div className="h-full rounded-2xl border border-[#1f2937] bg-[#0a0a0b]/40 backdrop-blur-sm p-4 flex flex-col overflow-hidden">
-      {/* Header */}
       <div className="mb-3">
         <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-1.5">
           <Film className="w-2.5 h-2.5" strokeWidth={2.5} />
@@ -1009,7 +979,6 @@ function DesktopClipPanel({
         </p>
       </div>
 
-      {/* Stats grid */}
       <div className="grid grid-cols-3 gap-1.5 mb-3">
         <div className="rounded-lg bg-white/[0.02] border border-[#1f2937] p-2">
           <div className="text-[8px] font-semibold uppercase tracking-wider text-zinc-500 mb-0.5">
@@ -1073,7 +1042,6 @@ function DesktopClipPanel({
         </div>
       </div>
 
-      {/* Actions */}
       <div className="space-y-1.5 flex-1 overflow-y-auto">
         {actions.map((action) => {
           const Icon = action.icon;
@@ -1156,14 +1124,19 @@ export default function SceneStudioPage() {
   const [autoSaveStatus, setAutoSaveStatus] = useState<'saved' | 'saving' | 'idle'>('saved');
   const [autoPlayActiveClip, setAutoPlayActiveClip] = useState(false);
 
-  // Wrapped setter so we can also clear autoplay flag when user manually selects
+  // === CHAIN MOAT: Remember which action user picked in the action sheet ===
+  // The action sheet has 4 options; we need to pre-select the matching tab
+  // in ClipGenerationModal. Without this, every action just opens "Upload"
+  // which defeats the purpose of "Continue from previous".
+  const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library'>('upload');
+
   const setActiveClipIndex = (idx: number) => {
     setActiveClipIndexState(idx);
   };
 
   // === CLOUDINARY SCENE MERGE ===
-  // Auto-triggers merge in background when clips become ready.
-  // Polls status. Returns merged_video_url when ready for seamless preview.
+  // NOTE: v2 hook also reads created_at to detect when the merged file is
+  // older than the newest clip (e.g. after chain-generating a new clip).
   const merge = useSceneMerge(
     projectId,
     sceneId,
@@ -1171,6 +1144,7 @@ export default function SceneStudioPage() {
       id: c.id,
       status: c.status,
       generated_video_url: c.generated_video_url,
+      created_at: c.created_at,
     })) || [],
     { autoMerge: true, debounceMs: 3000 }
   );
@@ -1240,7 +1214,6 @@ export default function SceneStudioPage() {
     }
   }, [scene, activeClipIndex]);
 
-  // Tap-to-select, tap-again-to-edit pattern
   const handleClipSelect = (index: number) => {
     if (index === activeClipIndex) {
       setClipDrawerOpen(true);
@@ -1251,25 +1224,35 @@ export default function SceneStudioPage() {
     }
   };
 
-  // Triggered when entire scene playback completes (last clip ended)
   const handleSceneEnded = () => {
     setAutoPlayActiveClip(false);
   };
 
-  // Internal setter used by PreviewPlayer to advance to next clip
-  // This setter enables autoplay so the next clip plays automatically
   const handleAdvanceFromPlayer = (newIdx: number) => {
     setAutoPlayActiveClip(true);
     setActiveClipIndexState(newIdx);
   };
 
+  // Default "+" tap (timeline + buttons, floating + button) — opens action sheet.
+  // User then picks from "Continue from previous", "Upload new reference", etc.
   const handleAddClick = () => {
     setAddActionSheetOpen(true);
   };
 
+  // === CHAIN MOAT: action sheet pick → pre-select correct modal tab ===
+  // This is the fix for the bug founder caught: previously, ALL action sheet
+  // picks ignored the action and opened the modal in default "Upload" mode.
+  // Now we honor the user's intent and route them to the right tab.
   const handlePickAddAction = (
-    _action: 'chain' | 'upload' | 'prompt' | 'url' | 'transition'
+    action: 'chain' | 'upload' | 'prompt' | 'url' | 'transition'
   ) => {
+    if (action === 'chain') {
+      setPendingSourceType('last_frame');
+    } else {
+      // 'upload', 'prompt', and 'url' all open the upload tab.
+      // (Prompt/URL aren't fully implemented yet — they get upload UX for now.)
+      setPendingSourceType('upload');
+    }
     setAddActionSheetOpen(false);
     setGenerateModalOpen(true);
   };
@@ -1354,13 +1337,18 @@ export default function SceneStudioPage() {
     alert('🚧 Duplicate coming in v2 — for now you can regenerate with the same prompt.');
   };
 
+  // Replace and Regenerate open the modal — they use the "upload" default tab
+  // (not "chain") because the user is editing an existing clip, not adding
+  // a new one in sequence.
   const handleReplaceClip = () => {
     setClipDrawerOpen(false);
+    setPendingSourceType('upload');
     setGenerateModalOpen(true);
   };
 
   const handleRegenerateClip = () => {
     setClipDrawerOpen(false);
+    setPendingSourceType('upload');
     setGenerateModalOpen(true);
   };
 
@@ -1415,11 +1403,9 @@ export default function SceneStudioPage() {
 
   return (
     <div className="h-screen overflow-hidden bg-[#050505] text-white relative">
-      {/* Ambient cinematic background glow */}
       <div className="fixed top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] rounded-full bg-purple-500/[0.06] blur-[120px] pointer-events-none" />
       <div className="fixed bottom-0 right-0 w-[400px] h-[300px] rounded-full bg-blue-500/[0.05] blur-[100px] pointer-events-none" />
 
-      {/* Local keyframes */}
       <style jsx global>{`
         @keyframes slideUpSheet {
           from { transform: translateY(100%); opacity: 0; }
@@ -1493,7 +1479,6 @@ export default function SceneStudioPage() {
                 </button>
               )}
             </div>
-            {/* Cloudinary merge status — shows merging/ready/failed states */}
             <MergeStatusBadge
               status={merge.status}
               errorMessage={merge.errorMessage}
@@ -1504,7 +1489,7 @@ export default function SceneStudioPage() {
 
           <div className="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={() => alert('🚧 Export coming in Session 11C — ZIP merged scenes for CapCut import.')}
+              onClick={() => alert('🚧 Export coming next session — merged scenes + clips download.')}
               className="flex items-center gap-1.5 h-9 px-3 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[12px] font-semibold shadow-lg shadow-purple-500/30 transition-all active:scale-95"
             >
               <Share2 className="w-3 h-3" strokeWidth={2.5} />
@@ -1561,11 +1546,9 @@ export default function SceneStudioPage() {
       </div>
 
       {/* =================== STUDIO BODY =================== */}
-      {/* MOBILE: stacked, scrollable          DESKTOP: 3-column fits viewport */}
       <main className="relative z-[1] h-[calc(100vh-3.5rem)] overflow-y-auto lg:overflow-hidden">
         {/* DESKTOP LAYOUT (≥1024px) */}
         <div className="hidden lg:grid lg:grid-cols-[1fr_320px] lg:grid-rows-[1fr_auto] lg:gap-3 lg:p-4 lg:h-full">
-          {/* Preview player (top-left, dominant) */}
           <div className="row-start-1 col-start-1 min-h-0">
             <PreviewPlayer
               clips={scene.clips}
@@ -1578,7 +1561,6 @@ export default function SceneStudioPage() {
             />
           </div>
 
-          {/* Right panel (clip details, full-height) */}
           <div className="row-start-1 row-span-2 col-start-2 min-h-0">
             <DesktopClipPanel
               clip={activeClip}
@@ -1592,7 +1574,6 @@ export default function SceneStudioPage() {
             />
           </div>
 
-          {/* Timeline strip (bottom-left, spans below preview) */}
           <div className="row-start-2 col-start-1 rounded-2xl border border-[#1f2937] bg-[#0a0a0b]/40 backdrop-blur-sm p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
@@ -1656,8 +1637,6 @@ export default function SceneStudioPage() {
 
         {/* MOBILE LAYOUT (<1024px) — stacked, scrollable */}
         <div className="lg:hidden pb-32">
-          {/* CapCut-style preview: tall portrait container, video uses object-contain
-              so any aspect ratio (9:16, 16:9, 1:1) gets letterbox/pillarbox black bars naturally */}
           <div className="px-3 sm:px-5 pt-4 sm:pt-5">
             <div className="h-[60vh] max-h-[640px] min-h-[420px] w-full">
               <PreviewPlayer
@@ -1725,8 +1704,6 @@ export default function SceneStudioPage() {
                     </div>
                   ))}
                   <div className="w-3" />
-                  {/* Hide big "Add clip" tile on mobile — replaced by floating + button below.
-                      Keeps showing on desktop where there's room. */}
                   <div className="hidden lg:block">
                     <PlusConnector onClick={handleAddClick} variant="end" hasChainOption={canChain} />
                   </div>
@@ -1762,8 +1739,6 @@ export default function SceneStudioPage() {
           )}
         </div>
 
-        {/* Mobile-only floating + button (CapCut convention) — bottom-right, thumb-reachable.
-            Only renders when there's at least one clip; empty state has its own Generate button. */}
         {scene.clips.length > 0 && (
           <button
             onClick={handleAddClick}
@@ -1780,6 +1755,25 @@ export default function SceneStudioPage() {
         )}
       </main>
 
+      {/* =================== BACKGROUND MOAT: Last-frame extraction =================== */}
+      {/* Invisible component. Watches clips. When a clip completes, extracts the
+          last frame using HTML5 Canvas and saves it via /extract-frame endpoint.
+          This is what makes the "Chain" feature actually work. */}
+      <LastFrameExtractor
+        clips={scene.clips.map((c) => ({
+          id: c.id,
+          status: c.status,
+          generated_video_url: c.generated_video_url,
+          last_frame_url: c.last_frame_url,
+          duration: c.duration,
+        }))}
+        onFrameExtracted={() => {
+          // Refresh the scene to pull in the new last_frame_url
+          fetchScene();
+        }}
+        debug
+      />
+
       {/* =================== MODALS & DRAWERS =================== */}
       <ClipGenerationModal
         open={generateModalOpen}
@@ -1791,6 +1785,7 @@ export default function SceneStudioPage() {
         profile={profile}
         onClipCreated={fetchScene}
         onProfileUpdate={fetchProfile}
+        initialSourceType={pendingSourceType}
       />
 
       <AddClipActionSheet
@@ -1800,7 +1795,6 @@ export default function SceneStudioPage() {
         canChain={canChain}
       />
 
-      {/* On mobile, drawer slides up. On desktop, panel is always visible — no drawer */}
       <div className="lg:hidden">
         <ClipActionDrawer
           open={clipDrawerOpen}

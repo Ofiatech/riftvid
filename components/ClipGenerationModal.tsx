@@ -46,6 +46,9 @@ interface ClipGenerationModalProps {
   profile: UserProfile | null;
   onClipCreated: () => void;
   onProfileUpdate: () => void;
+  // NEW: When parent opens the modal via the action sheet, it tells us
+  // which tab to pre-select. Default = 'upload' for backwards compat.
+  initialSourceType?: SourceType;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -76,9 +79,11 @@ export default function ClipGenerationModal({
   profile,
   onClipCreated,
   onProfileUpdate,
+  initialSourceType = 'upload',
 }: ClipGenerationModalProps) {
-  // Source picker state
-  const [sourceType, setSourceType] = useState<SourceType>('upload');
+  // Source picker state — seeded from initialSourceType so the modal opens
+  // on the tab matching the user's action sheet pick.
+  const [sourceType, setSourceType] = useState<SourceType>(initialSourceType);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedLastFrameClipId, setSelectedLastFrameClipId] = useState<string | null>(null);
@@ -120,7 +125,6 @@ export default function ClipGenerationModal({
   const requiredCredits = duration === 5 ? 1 : 2;
   const canAffordGeneration = credits >= requiredCredits;
 
-  // Get current source image URL based on tab
   const getCurrentImageUrl = useCallback((): string | null => {
     if (sourceType === 'upload') return previewUrl;
     if (sourceType === 'last_frame') {
@@ -132,6 +136,15 @@ export default function ClipGenerationModal({
   }, [sourceType, previewUrl, selectedLastFrameClipId, lastFrameOptions, selectedLibraryItem]);
 
   const currentImageUrl = getCurrentImageUrl();
+
+  // Sync sourceType to initialSourceType whenever the modal opens.
+  // Without this, the modal keeps the LAST tab the user was on,
+  // ignoring the user's most recent action sheet pick.
+  useEffect(() => {
+    if (open) {
+      setSourceType(initialSourceType);
+    }
+  }, [open, initialSourceType]);
 
   // Fetch library items when library tab is selected
   useEffect(() => {
@@ -156,19 +169,17 @@ export default function ClipGenerationModal({
     }
   }, [sourceType, libraryItems.length]);
 
-  // Auto-select most recent last-frame if available
+  // Auto-select most recent last-frame if available (when on Chain tab)
   useEffect(() => {
     if (sourceType === 'last_frame' && lastFrameOptions.length > 0 && !selectedLastFrameClipId) {
       setSelectedLastFrameClipId(lastFrameOptions[lastFrameOptions.length - 1].clipId);
     }
   }, [sourceType, lastFrameOptions, selectedLastFrameClipId]);
 
-  // Focus custom answer input when shown
   useEffect(() => {
     if (showCustomInput) customInputRef.current?.focus();
   }, [showCustomInput]);
 
-  // Cleanup blob URLs and polling on unmount
   useEffect(() => {
     return () => {
       if (previewUrl && previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
@@ -183,7 +194,7 @@ export default function ClipGenerationModal({
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
-    setSourceType('upload');
+    setSourceType(initialSourceType);
     setSelectedFile(null);
     if (previewUrl && previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     setPreviewUrl(null);
@@ -376,7 +387,6 @@ export default function ClipGenerationModal({
         }
         onClipCreated();
         onProfileUpdate();
-        // Auto-close modal after 2 seconds on success
         setTimeout(() => handleClose(), 2000);
       } else if (data.status === 'processing') {
         setGenMode('processing');
@@ -419,7 +429,6 @@ export default function ClipGenerationModal({
     setOutOfCredits(false);
 
     try {
-      // Build the create clip payload based on source type
       const payload: Record<string, unknown> = {
         base_prompt: basePrompt || null,
         refined_prompt: prompt.trim(),
@@ -442,7 +451,6 @@ export default function ClipGenerationModal({
         payload.source_image_url = selectedLibraryItem?.source_image_url;
       }
 
-      // Create clip via Sequencer API
       const createRes = await fetch(
         `/api/projects/${projectId}/scenes/${sceneId}/clips`,
         {
@@ -464,9 +472,8 @@ export default function ClipGenerationModal({
       if (!createRes.ok) throw new Error(created.error || 'Failed to create clip');
 
       onProfileUpdate();
-      onClipCreated(); // Refresh timeline immediately to show queued state
+      onClipCreated();
 
-      // Trigger actual video generation (with clips tableMode!)
       const genRes = await fetch('/api/generate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -475,7 +482,7 @@ export default function ClipGenerationModal({
           prompt: prompt.trim(),
           imageUrl: created.source_image_url,
           duration,
-          tableMode: 'clips', // Tell generate-video to look in clips table
+          tableMode: 'clips',
         }),
       });
 
@@ -511,7 +518,6 @@ export default function ClipGenerationModal({
         <div className="absolute -top-20 -left-20 w-64 h-64 rounded-full bg-purple-500/20 blur-[80px] opacity-50 pointer-events-none" />
 
         <div className="relative p-6 md:p-8">
-          {/* Header */}
           <div className="flex items-start justify-between mb-6">
             <div>
               <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/20 text-[9px] font-semibold uppercase tracking-wider text-purple-300 mb-2">
@@ -559,7 +565,6 @@ export default function ClipGenerationModal({
             </button>
           </div>
 
-          {/* OUT OF CREDITS */}
           {outOfCredits && (
             <div className="mb-5 rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-500/[0.08] to-orange-500/[0.04] p-6 text-center">
               <div className="w-14 h-14 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center mx-auto mb-4">
@@ -584,7 +589,6 @@ export default function ClipGenerationModal({
             </div>
           )}
 
-          {/* COMPLETED STATE */}
           {genMode === 'completed' && (
             <div className="mb-5 rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/[0.08] to-purple-500/[0.04] p-6 text-center">
               <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4">
@@ -597,7 +601,6 @@ export default function ClipGenerationModal({
             </div>
           )}
 
-          {/* GENERATING STATE */}
           {isGenerating && (
             <div className="mb-5">
               <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.08] to-blue-500/[0.04] p-6">
@@ -635,7 +638,6 @@ export default function ClipGenerationModal({
             </div>
           )}
 
-          {/* FAILED STATE */}
           {genMode === 'failed' && (
             <div className="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/[0.05] p-5 text-center">
               <div className="text-[14px] font-medium text-rose-200 mb-1">Generation failed</div>
@@ -662,10 +664,8 @@ export default function ClipGenerationModal({
             </div>
           )}
 
-          {/* MAIN FORM (idle/asking/done states) */}
           {!isGenerating && genMode !== 'completed' && genMode !== 'failed' && !outOfCredits && (
             <>
-              {/* SOURCE PICKER TABS */}
               {(chatMode === 'idle' || chatMode === 'done') && (
                 <div className="mb-5">
                   <label className="block text-[12px] font-medium text-zinc-300 mb-2">Source Image</label>
@@ -711,7 +711,6 @@ export default function ClipGenerationModal({
                     </button>
                   </div>
 
-                  {/* UPLOAD TAB */}
                   {sourceType === 'upload' && (
                     <>
                       {previewUrl ? (
@@ -769,7 +768,6 @@ export default function ClipGenerationModal({
                     </>
                   )}
 
-                  {/* CHAIN TAB */}
                   {sourceType === 'last_frame' && (
                     <>
                       {!hasLastFrameOptions ? (
@@ -821,7 +819,6 @@ export default function ClipGenerationModal({
                     </>
                   )}
 
-                  {/* LIBRARY TAB */}
                   {sourceType === 'library' && (
                     <>
                       {libraryLoading ? (
@@ -872,7 +869,6 @@ export default function ClipGenerationModal({
                 </div>
               )}
 
-              {/* PROMPT + RIFT ASSISTANT */}
               <div className="mb-5">
                 <div className="flex items-center justify-between mb-2">
                   <label className="block text-[12px] font-medium text-zinc-300">
@@ -1051,7 +1047,6 @@ export default function ClipGenerationModal({
                 )}
               </div>
 
-              {/* DURATION + AI TOGGLE */}
               {(chatMode === 'idle' || chatMode === 'done') && (
                 <>
                   <div className="mb-5">
@@ -1138,7 +1133,6 @@ export default function ClipGenerationModal({
             </>
           )}
 
-          {/* FOOTER */}
           {!isGenerating && genMode !== 'completed' && genMode !== 'failed' && !outOfCredits && (
             <div className="flex items-center justify-between pt-4 border-t border-[#141821] gap-3">
               <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">

@@ -1,275 +1,223 @@
-// Cloudinary SDK wrapper for scene merging
-// v3: Uses Cloudinary's documented URL syntax: l_video:<id>,fl_splice/fl_layer_apply
+// lib/cloudinary.ts
+//
+// Cloudinary scene merging via URL-based video concatenation.
+//
+// HOW IT WORKS:
+// 1. Each clip is uploaded to Cloudinary (so it has a Cloudinary public_id)
+// 2. We build a URL that uses Cloudinary's `l_video` (layer video) + `fl_splice`
+//    + `fl_layer_apply` transforms to concatenate them in order
+// 3. We save that URL to scenes.merged_video_url
+// 4. The frontend player loads that URL — Cloudinary serves the concatenated
+//    video on-demand (processing happens server-side when first requested)
+//
+// v3 FIX (Session 11C-1 bugfix):
+// Removed the warmMergeUrl step that was throwing 404s and falsely marking
+// merges as failed. Cloudinary needs 30-90+ seconds to process the concat,
+// but our warm check was firing immediately after URL generation, causing
+// 404s while the video was still being assembled.
+//
+// The fix: trust the URL. Save it. Mark merge as 'ready'. The player will
+// load the URL when needed, by which time Cloudinary has finished. If
+// Cloudinary genuinely failed (rare), the player's error event will catch
+// it client-side.
 
-import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
+import { v2 as cloudinary } from 'cloudinary';
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true,
-});
-
-export interface ClipForMerge {
-  clipId: string;
-  videoUrl: string;
-  clipOrder: number;
-}
-
-export interface MergeResult {
-  merged_video_url: string;
-  public_id: string;
-  duration: number;
-  format: string;
-  bytes: number;
-}
-
-/**
- * Upload a single clip from a public URL to Cloudinary.
- */
-async function uploadClipForMerge(
-  videoUrl: string,
-  userId: string,
-  sceneId: string,
-  clipOrder: number
-): Promise<UploadApiResponse> {
-  const publicId = `riftvid/${userId}/scenes/${sceneId}/source-clips/clip-${clipOrder
-    .toString()
-    .padStart(3, '0')}`;
-
-  return await cloudinary.uploader.upload(videoUrl, {
-    resource_type: 'video',
-    public_id: publicId,
-    overwrite: true,
-    invalidate: true,
-  });
-}
-
-/**
- * Build the concatenation URL using Cloudinary's documented syntax.
- *
- * Cloudinary URL format (from official docs):
- *   /video/upload/<base_transforms>/l_video:<overlay_id>,fl_splice,<overlay_transforms>/fl_layer_apply/<base_id>.mp4
- *
- * Key points:
- * - Overlay video id has slashes replaced with COLONS in l_video reference
- * - fl_splice and l_video are in the SAME transformation segment (comma separated)
- * - Each overlay clip = one /l_video:...,fl_splice,.../fl_layer_apply/ pair
- * - w_1.0,h_1.0,fl_relative,c_fill makes overlays match the base size
- *
- * Reference URL structure for 3 clips (clip-001 as base, clip-002 + clip-003 spliced):
- *   /video/upload/
- *     w_720,h_1280,c_fill/                                          ← base sizing
- *     l_video:.../clip-002,fl_splice,w_1.0,h_1.0,fl_relative,c_fill/  ← splice clip 2
- *     fl_layer_apply/
- *     l_video:.../clip-003,fl_splice,w_1.0,h_1.0,fl_relative,c_fill/  ← splice clip 3
- *     fl_layer_apply/
- *     <base_id>.mp4
- */
-function buildConcatenationUrl(clipPublicIds: string[]): string {
-  if (clipPublicIds.length === 0) {
-    throw new Error('No clips to concatenate');
-  }
-
-  const baseClipId = clipPublicIds[0];
-  const overlayClips = clipPublicIds.slice(1);
-
-  if (overlayClips.length === 0) {
-    // Single clip — no concatenation needed
-    return cloudinary.url(baseClipId, {
-      resource_type: 'video',
-      format: 'mp4',
-      secure: true,
-    });
-  }
-
-  // Build raw transformation array for cloudinary.url()
-  // Each overlay needs TWO segments: one with overlay+splice, one with layer_apply
-  const transformations: Array<{ raw_transformation: string }> = [];
-
-  for (const overlayId of overlayClips) {
-    // Cloudinary overlay syntax: l_video:<public_id_with_colons_instead_of_slashes>
-    const overlayRef = overlayId.replace(/\//g, ':');
-
-    // Segment 1: declare the overlay with splice flag + relative sizing
-    transformations.push({
-      raw_transformation: `l_video:${overlayRef},fl_splice,w_1.0,h_1.0,fl_relative,c_fill`,
-    });
-    // Segment 2: apply the layer (concatenates it)
-    transformations.push({
-      raw_transformation: `fl_layer_apply`,
-    });
-  }
-
-  return cloudinary.url(baseClipId, {
-    resource_type: 'video',
-    format: 'mp4',
-    transformation: transformations,
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
     secure: true,
   });
 }
 
-/**
- * "Warm" the merge URL by fetching it — this forces Cloudinary to generate
- * the merged video and cache it on their CDN.
- *
- * Use GET (not HEAD) because Cloudinary needs to actually process the video
- * to generate it on first request.
- */
-async function warmMergeUrl(
-  mergeUrl: string
-): Promise<{ bytes: number; status: number }> {
-  // First request triggers Cloudinary processing — can take 20-60s
-  // We use a streaming approach to not buffer the whole video in memory
-  const response = await fetch(mergeUrl, { method: 'GET' });
+interface ClipForMerge {
+  id: string;
+  clip_order: number;
+  generated_video_url: string;
+}
 
-  if (!response.ok) {
-    // Try to read error body for diagnostics
-    let errorBody = '';
-    try {
-      errorBody = await response.text();
-    } catch {
-      errorBody = '(no body)';
-    }
-    throw new Error(
-      `Cloudinary returned ${response.status} ${response.statusText}: ${errorBody.slice(0, 500)}`
-    );
-  }
+// Re-export the interface so other files can import it
+export type { ClipForMerge };
 
-  // Consume the response body so connection closes cleanly
-  const buffer = await response.arrayBuffer();
-  const bytes = buffer.byteLength;
-
-  return { bytes, status: response.status };
+interface MergeResult {
+  merged_video_url: string;
+  cloudinary_public_ids: string[];
 }
 
 /**
- * MAIN MERGE FUNCTION
+ * Uploads a single clip to Cloudinary and returns its public_id.
+ * Uses upsert (overwrite=true) so re-running for the same clip is idempotent.
  */
-export async function mergeSceneClips(
-  clips: ClipForMerge[],
+async function uploadClipToCloudinary(
+  clip: ClipForMerge,
   userId: string,
   sceneId: string,
-  totalDurationSeconds: number
-): Promise<MergeResult> {
-  if (clips.length === 0) {
-    throw new Error('Cannot merge: scene has no clips');
-  }
+  index: number
+): Promise<string> {
+  const publicId = `riftvid/user_${userId}/scenes/${sceneId}/source-clips/clip-${String(index + 1).padStart(3, '0')}`;
 
-  const sortedClips = [...clips].sort((a, b) => a.clipOrder - b.clipOrder);
+  const result = await cloudinary.uploader.upload(clip.generated_video_url, {
+    public_id: publicId,
+    resource_type: 'video',
+    overwrite: true,
+    invalidate: true,
+    // Don't wait for transformations to finish — we just need the upload
+    eager_async: true,
+  });
 
-  console.log(
-    `Cloudinary merge: uploading ${sortedClips.length} clips for scene ${sceneId}`
-  );
-
-  // STEP 1: Upload each clip to Cloudinary
-  const uploadResults: string[] = [];
-  for (const clip of sortedClips) {
-    try {
-      const result = await uploadClipForMerge(
-        clip.videoUrl,
-        userId,
-        sceneId,
-        clip.clipOrder
-      );
-      uploadResults.push(result.public_id);
-      console.log(`  ✓ Uploaded clip ${clip.clipOrder} → ${result.public_id}`);
-    } catch (err) {
-      console.error(`  ✗ Failed to upload clip ${clip.clipOrder}:`, err);
-      throw new Error(
-        `Failed to upload clip ${clip.clipOrder}: ${
-          err instanceof Error ? err.message : 'unknown error'
-        }`
-      );
-    }
-  }
-
-  // STEP 2: Single clip — no concat needed
-  if (uploadResults.length === 1) {
-    console.log('Single clip — returning direct URL');
-    const singleUrl = cloudinary.url(uploadResults[0], {
-      resource_type: 'video',
-      format: 'mp4',
-      secure: true,
-    });
-    return {
-      merged_video_url: singleUrl,
-      public_id: uploadResults[0],
-      duration: totalDurationSeconds,
-      format: 'mp4',
-      bytes: 0,
-    };
-  }
-
-  // STEP 3: Build concat URL using documented Cloudinary syntax
-  console.log(`Cloudinary merge: building concat URL for ${uploadResults.length} clips`);
-  const mergeUrl = buildConcatenationUrl(uploadResults);
-  console.log(`Generated URL: ${mergeUrl}`);
-
-  // STEP 4: Warm it (forces Cloudinary to process)
-  console.log('Warming merge URL (Cloudinary is processing concatenation)...');
-  try {
-    const warmResult = await warmMergeUrl(mergeUrl);
-    console.log(
-      `Merge URL warm: SUCCESS (${(warmResult.bytes / 1024 / 1024).toFixed(2)} MB)`
-    );
-
-    return {
-      merged_video_url: mergeUrl,
-      public_id: uploadResults[0],
-      duration: totalDurationSeconds,
-      format: 'mp4',
-      bytes: warmResult.bytes,
-    };
-  } catch (err) {
-    console.error('Merge URL warm failed:', err);
-    throw new Error(
-      `Cloudinary concatenation processing failed: ${
-        err instanceof Error ? err.message : 'unknown'
-      }`
-    );
-  }
+  console.log(`  ✓ Uploaded clip ${index + 1} → ${result.public_id}`);
+  return result.public_id;
 }
 
 /**
- * Delete a video from Cloudinary.
+ * Deletes all existing source clips for a scene before re-uploading.
+ * Prevents stale clips from leaking into the merge.
  */
-export async function deleteMergedVideo(publicId: string): Promise<void> {
-  if (!publicId) return;
-  try {
-    await cloudinary.uploader.destroy(publicId, { resource_type: 'video' });
-    console.log(`Cloudinary cleanup: deleted ${publicId}`);
-  } catch (err) {
-    console.error(`Cloudinary cleanup failed for ${publicId}:`, err);
-  }
-}
-
-/**
- * Delete all source clips for a scene (cleanup before re-merging).
- */
-export async function deleteSceneSourceClips(
+async function cleanupExistingSourceClips(
   userId: string,
   sceneId: string
 ): Promise<void> {
   try {
-    const folderPath = `riftvid/${userId}/scenes/${sceneId}/source-clips`;
-    await cloudinary.api.delete_resources_by_prefix(folderPath, {
+    const prefix = `riftvid/user_${userId}/scenes/${sceneId}/source-clips/`;
+    await cloudinary.api.delete_resources_by_prefix(prefix, {
       resource_type: 'video',
     });
     console.log(`Cloudinary cleanup: deleted source clips for scene ${sceneId}`);
   } catch (err) {
-    console.error(`Cloudinary scene cleanup failed:`, err);
+    // Non-fatal — first merge for a scene won't have anything to delete
+    console.log(`Cloudinary cleanup: nothing to delete (first merge?)`, err instanceof Error ? err.message : '');
   }
 }
 
-export async function pingCloudinary(): Promise<boolean> {
+/**
+ * Builds the URL that concatenates clips in order via Cloudinary transforms.
+ *
+ * Concat URL pattern (for 3 clips):
+ *   /video/upload/
+ *     l_video:CLIP_2_ID,fl_splice,w_1.0,h_1.0,fl_relative,c_fill
+ *     /fl_layer_apply
+ *     /l_video:CLIP_3_ID,fl_splice,w_1.0,h_1.0,fl_relative,c_fill
+ *     /fl_layer_apply
+ *     /v1/CLIP_1_ID.mp4
+ *
+ * Clip 1 is the base; clips 2+ are spliced as layers on top in order.
+ */
+function buildConcatUrl(publicIds: string[]): string {
+  if (publicIds.length === 0) {
+    throw new Error('Cannot build concat URL with zero clips');
+  }
+
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  if (!cloudName) {
+    throw new Error('CLOUDINARY_CLOUD_NAME is not configured');
+  }
+
+  // Cloudinary public_ids use `/` as separator; in URL transforms we use `:`
+  const cloudinaryIds = publicIds.map((id) => id.replace(/\//g, ':'));
+
+  if (cloudinaryIds.length === 1) {
+    // Single clip — no concat needed
+    return `https://res.cloudinary.com/${cloudName}/video/upload/v1/${publicIds[0]}.mp4`;
+  }
+
+  // First clip is the base; rest are spliced as layers
+  const baseClip = publicIds[0];
+  const spliceLayers = cloudinaryIds.slice(1).map((id) => {
+    return `l_video:${id},fl_splice,w_1.0,h_1.0,fl_relative,c_fill/fl_layer_apply`;
+  });
+
+  const transformChain = spliceLayers.join('/');
+  return `https://res.cloudinary.com/${cloudName}/video/upload/${transformChain}/v1/${baseClip}.mp4`;
+}
+
+/**
+ * Main merge function. Called by the merge route.
+ *
+ * Steps:
+ * 1. Cleanup old source clips for this scene
+ * 2. Upload each clip to Cloudinary (parallel)
+ * 3. Build the concat URL
+ * 4. Return the URL — no warm check, Cloudinary processes on first request
+ */
+export async function mergeSceneClips(
+  clips: ClipForMerge[],
+  userId: string,
+  sceneId: string
+): Promise<MergeResult> {
+  if (!clips || clips.length === 0) {
+    throw new Error('No clips provided to merge');
+  }
+
+  if (!process.env.CLOUDINARY_CLOUD_NAME) {
+    throw new Error('Cloudinary is not configured (missing CLOUDINARY_CLOUD_NAME)');
+  }
+
+  console.log(`Cloudinary merge: uploading ${clips.length} clips for scene ${sceneId}`);
+
+  // Step 1: Clean up old source clips (prevent stale data)
+  await cleanupExistingSourceClips(userId, sceneId);
+
+  // Step 2: Upload all clips in parallel (faster than sequential)
+  // Sort by clip_order to ensure correct sequence in the merged video
+  const sortedClips = [...clips].sort((a, b) => a.clip_order - b.clip_order);
+
+  const uploadPromises = sortedClips.map((clip, index) =>
+    uploadClipToCloudinary(clip, userId, sceneId, index)
+  );
+  const publicIds = await Promise.all(uploadPromises);
+
+  // Step 3: Build the concat URL
+  console.log(`Cloudinary merge: building concat URL for ${publicIds.length} clips`);
+  const mergedUrl = buildConcatUrl(publicIds);
+  console.log(`Generated URL: ${mergedUrl}`);
+
+  // Step 4: Trust Cloudinary. No warm check.
+  //
+  // Why no warm check?
+  // Cloudinary processes the concat asynchronously the first time the URL
+  // is accessed. That processing takes 30-90+ seconds. Our previous warm
+  // check was hitting the URL ~5 seconds after generation and getting 404s
+  // (because Cloudinary hadn't finished). That caused false 'failed' status
+  // even though the merge was working correctly.
+  //
+  // The player will hit the URL when the user opens the scene. By then
+  // (or after a brief delay), Cloudinary has finished processing and the
+  // URL serves the merged video. If a true Cloudinary outage occurs, the
+  // player's onError handler catches it client-side.
+  console.log(`Cloudinary merge: complete, URL ready (Cloudinary will process on first request)`);
+
+  return {
+    merged_video_url: mergedUrl,
+    cloudinary_public_ids: publicIds,
+  };
+}
+
+/**
+ * Optional utility: delete a scene's source clips and merged output.
+ * Called when a scene is deleted to keep Cloudinary storage clean.
+ */
+export async function deleteSceneFromCloudinary(
+  userId: string,
+  sceneId: string
+): Promise<void> {
+  if (!process.env.CLOUDINARY_CLOUD_NAME) return;
+
   try {
-    await cloudinary.api.ping();
-    return true;
+    const prefix = `riftvid/user_${userId}/scenes/${sceneId}/`;
+    await cloudinary.api.delete_resources_by_prefix(prefix, {
+      resource_type: 'video',
+    });
+    console.log(`Cloudinary: deleted all assets for scene ${sceneId}`);
   } catch (err) {
-    console.error('Cloudinary ping failed:', err);
-    throw err;
+    console.error('Cloudinary cleanup error:', err);
+    // Non-fatal — scene is being deleted anyway
   }
 }
 
-export default cloudinary;
+/**
+ * Alias for deleteSceneFromCloudinary — kept for backwards compatibility
+ * with the merge route, which imports this name.
+ */
+export const deleteSceneSourceClips = deleteSceneFromCloudinary;

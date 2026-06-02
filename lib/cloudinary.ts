@@ -68,16 +68,62 @@ async function uploadClipToCloudinary(
     index + 1
   ).padStart(3, '0')}`;
 
-  const result = await cloudinary.uploader.upload(clip.videoUrl, {
-    public_id: publicId,
-    resource_type: 'video',
-    overwrite: true,
-    invalidate: true,
-    eager_async: true,
-  });
+  try {
+    const result = await cloudinary.uploader.upload(clip.videoUrl, {
+      public_id: publicId,
+      resource_type: 'video',
+      overwrite: true,
+      invalidate: true,
+      eager_async: true,
+    });
 
-  console.log(`  ✓ Uploaded clip ${index + 1} → ${result.public_id}`);
-  return result.public_id;
+    console.log(`  ✓ Uploaded clip ${index + 1} → ${result.public_id}`);
+    return result.public_id;
+  } catch (err) {
+    // Cloudinary upload errors are usually PLAIN OBJECTS, not Error instances
+    // (e.g. { message, http_code, name }). The merge route only kept the
+    // message when `err instanceof Error`, so every real failure was being
+    // swallowed and stored as the useless "Unknown merge error".
+    //
+    // We convert it here into a proper Error carrying the real reason PLUS
+    // which clip and which source URL failed — so merge_error finally tells
+    // us the truth (expired URL, 404 fetch, size limit, bad format, etc.).
+    const reason = extractCloudinaryError(err);
+    const shortUrl =
+      clip.videoUrl.length > 90 ? clip.videoUrl.slice(0, 90) + '…' : clip.videoUrl;
+    console.error(`  ✗ Clip ${index + 1} upload FAILED:`, reason, '| url:', shortUrl);
+    throw new Error(
+      `Clip ${index + 1} (order ${clip.clipOrder}) failed to upload to Cloudinary. ` +
+        `Source: ${shortUrl} — Reason: ${reason}`
+    );
+  }
+}
+
+/**
+ * Normalizes the many shapes a Cloudinary error can take into a readable
+ * string. Cloudinary may throw:
+ *   - a real Error instance
+ *   - { message: string, http_code: number }
+ *   - { error: { message: string } }
+ *   - a bare string
+ */
+function extractCloudinaryError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    const e = err as Record<string, unknown>;
+    if (typeof e.message === 'string') return e.message;
+    if (e.error && typeof e.error === 'object') {
+      const inner = e.error as Record<string, unknown>;
+      if (typeof inner.message === 'string') return inner.message;
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return 'Unserializable Cloudinary error';
+    }
+  }
+  return 'Unknown Cloudinary error';
 }
 
 /**

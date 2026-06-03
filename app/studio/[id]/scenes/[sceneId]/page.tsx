@@ -72,6 +72,7 @@ function PreviewPlayer({
   onSceneEnded,
   mergedVideoUrl,
   mergeReady,
+  pendingClipSeek,
 }: {
   clips: ClipItem[];
   activeClipIndex: number;
@@ -80,10 +81,18 @@ function PreviewPlayer({
   onSceneEnded: () => void;
   mergedVideoUrl?: string | null;
   mergeReady?: boolean;
+  // Parent signals a user-initiated seek (e.g. thumbnail tap) by changing the
+  // nonce. The player seeks the merged video to that clip's start and briefly
+  // suppresses the auto-sync effect to prevent a feedback loop. null = no seek.
+  pendingClipSeek?: { clipIndex: number; nonce: number } | null;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
   const scrubRef = useRef<HTMLDivElement>(null);
+  // When true, the auto-sync effect skips its work. Set true synchronously
+  // when a user-initiated seek happens (thumbnail tap), cleared shortly after
+  // so the video has time to update its currentTime before auto-sync resumes.
+  const seekingRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [clipTime, setClipTime] = useState(0);
   const [clipDuration, setClipDuration] = useState(0);
@@ -108,7 +117,7 @@ function PreviewPlayer({
     .reduce((sum, c) => sum + c.duration, 0);
 
   const sceneProgress = totalSceneDuration > 0
-    ? ((elapsedBeforeActive + clipTime) / totalSceneDuration) * 100
+    ? ((useSeamlessMerged ? clipTime : elapsedBeforeActive + clipTime) / totalSceneDuration) * 100
     : 0;
 
   useEffect(() => {
@@ -122,38 +131,21 @@ function PreviewPlayer({
     const video = videoRef.current;
     if (!video) return;
 
-    // === Thumbnail-tap → seek merged video to that clip's start ===
-    // When activeClipIndex changes (e.g. user tapped a thumbnail), in merged
-    // mode we seek the merged file to the corresponding scene-time. The 0.6s
-    // tolerance prevents a feedback loop with the auto-sync effect below
-    // (which updates activeClipIndex from the playhead). If we're already
-    // close to the right spot, leave the playhead alone.
-    if (useSeamlessMerged) {
-      let runningTotal = 0;
-      for (let i = 0; i < activeClipIndex; i++) {
-        const c = clips[i];
-        if (c.status === 'completed') runningTotal += c.duration;
-      }
-      if (Math.abs(video.currentTime - runningTotal) > 0.6) {
-        try {
-          video.currentTime = runningTotal;
-        } catch {
-          /* video not yet seekable — will catch up on next render */
-        }
-      }
-    }
-
     if (!useSeamlessMerged && (!activeClip?.generated_video_url || activeClip.status !== 'completed')) {
       setPlaying(false);
       return;
     }
-    if (autoPlay) {
+    // autoPlay is only meaningful in clip-by-clip mode (it fires on auto-advance
+    // between clips). In merged mode the single merged video plays continuously,
+    // so re-triggering play() on every boundary cross is wasteful and can fight
+    // the user's pause state.
+    if (!useSeamlessMerged && autoPlay) {
       const t = setTimeout(() => {
         video.play().catch(() => setPlaying(false));
       }, 80);
       return () => clearTimeout(t);
     }
-  }, [activeClip?.id, activeClip?.generated_video_url, activeClip?.status, autoPlay, useSeamlessMerged, activeClipIndex, clips]);
+  }, [activeClip?.id, activeClip?.generated_video_url, activeClip?.status, autoPlay, useSeamlessMerged]);
 
   useEffect(() => {
     if (useSeamlessMerged) return;
@@ -165,22 +157,59 @@ function PreviewPlayer({
     }
   }, [nextClip?.id, nextClip?.generated_video_url, nextClip?.status, useSeamlessMerged]);
 
+  // === User-initiated seek (e.g. thumbnail tap) ===
+  // Parent bumps the nonce to request a seek. We set seekingRef true BEFORE
+  // touching video.currentTime so the auto-sync effect below (declared next)
+  // sees the flag in the same render cycle and skips its run. seekingRef is
+  // released after a short window so the auto-sync effect can resume tracking
+  // the playhead naturally once timeupdate has caught up. Premiere-style:
+  // we never force play/pause; the video's current play state is preserved.
+  useEffect(() => {
+    if (!pendingClipSeek || !useSeamlessMerged) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    let runningTotal = 0;
+    for (let i = 0; i < pendingClipSeek.clipIndex; i++) {
+      const c = clips[i];
+      if (c.status === 'completed') runningTotal += c.duration;
+    }
+
+    seekingRef.current = true;
+    try {
+      video.currentTime = runningTotal;
+    } catch {
+      /* not seekable yet */
+    }
+
+    const timer = setTimeout(() => {
+      seekingRef.current = false;
+    }, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingClipSeek?.nonce, useSeamlessMerged]);
+
   // === Auto-sync activeClipIndex to playhead during merged playback ===
   // As the merged video plays, figure out which clip the current scene-time
   // falls into and update activeClipIndex so the timeline thumbnail follows.
-  // Walks each clip using its actual duration, so it works for any mix of
-  // clip lengths (5s + 10s + 5s + 7s, whatever the user combines).
+  // Walks each clip using its actual duration, so any mix of clip lengths
+  // (5s + 10s + 5s + 7s, whatever) is handled with the same code.
+  //
+  // Skipped while a user-initiated seek is in flight (seekingRef=true), so
+  // we don't fight the seek with stale clipTime data.
   useEffect(() => {
     if (!useSeamlessMerged) return;
     if (totalSceneDuration === 0) return;
+    if (seekingRef.current) return;
+
     let runningTotal = 0;
     for (let i = 0; i < clips.length; i++) {
       const c = clips[i];
       if (c.status !== 'completed') continue;
       const clipEnd = runningTotal + c.duration;
-      // Use a tiny epsilon so the LAST clip stays highlighted at the very end
-      // instead of falling off when clipTime === totalSceneDuration.
-      if (clipTime < clipEnd - 0.01 || i === clips.length - 1) {
+      // Pick this clip if playhead is inside its range, OR if it's the last
+      // clip and the playhead is at or past its end (end-of-scene).
+      if (clipTime < clipEnd || i === clips.length - 1) {
         if (i !== activeClipIndex) {
           setActiveClipIndex(i);
         }
@@ -1285,6 +1314,12 @@ export default function SceneStudioPage() {
   // which defeats the purpose of "Continue from previous".
   const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library'>('upload');
 
+  // === USER-INITIATED PLAYER SEEK ===
+  // When user taps a thumbnail and merged playback is active, we set this
+  // so the player seeks the merged video to that clip's start. Using a nonce
+  // (rather than just clipIndex) lets the same clip be re-tapped repeatedly.
+  const [pendingClipSeek, setPendingClipSeek] = useState<{ clipIndex: number; nonce: number } | null>(null);
+
   const setActiveClipIndex = (idx: number) => {
     setActiveClipIndexState(idx);
   };
@@ -1376,6 +1411,11 @@ export default function SceneStudioPage() {
       setActiveClipIndexState(index);
       setAutoPlayActiveClip(false);
       setClipDrawerOpen(false);
+      // If merged playback is active, ask the player to seek to this clip's
+      // start in the merged file. Premiere-style — preserves current play state.
+      if (merge.status === 'ready') {
+        setPendingClipSeek({ clipIndex: index, nonce: Date.now() });
+      }
     }
   };
 
@@ -1713,6 +1753,7 @@ export default function SceneStudioPage() {
               onSceneEnded={handleSceneEnded}
               mergedVideoUrl={merge.mergedVideoUrl}
               mergeReady={merge.status === 'ready'}
+              pendingClipSeek={pendingClipSeek}
             />
           </div>
 
@@ -1798,6 +1839,7 @@ export default function SceneStudioPage() {
                 onSceneEnded={handleSceneEnded}
                 mergedVideoUrl={merge.mergedVideoUrl}
                 mergeReady={merge.status === 'ready'}
+                pendingClipSeek={pendingClipSeek}
               />
             </div>
           </div>

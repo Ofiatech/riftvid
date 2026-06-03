@@ -392,10 +392,10 @@ function TimelineClipCard({
   return (
     <button
       onClick={onSelect}
-      className={`relative shrink-0 transition-all duration-300 ease-out ${
+      className={`relative shrink-0 transition-all duration-200 ease-out ${
         isActive
-          ? 'w-[68px] sm:w-[80px] lg:w-[140px] scale-105 z-10'
-          : 'w-[56px] sm:w-[68px] lg:w-[110px] opacity-70 hover:opacity-100'
+          ? 'w-[60px] sm:w-[68px] lg:w-[96px] z-10'
+          : 'w-[56px] sm:w-[64px] lg:w-[88px] opacity-65 hover:opacity-100'
       }`}
     >
       <div
@@ -458,17 +458,7 @@ function TimelineClipCard({
         <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-md text-[8px] font-bold text-white border border-white/10">
           {clip.duration}s
         </div>
-
-        {isActive && clip.status === 'completed' && (
-          <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-purple-500/80 backdrop-blur-md text-[7px] font-bold text-white border border-white/20">
-            Tap to edit
-          </div>
-        )}
       </div>
-
-      {isActive && (
-        <div className="absolute -inset-1 rounded-xl bg-gradient-to-r from-purple-500/40 via-blue-500/40 to-purple-500/40 blur-md -z-10 animate-pulse" />
-      )}
     </button>
   );
 }
@@ -1609,21 +1599,17 @@ export default function SceneStudioPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <div className="flex items-center gap-0 pb-2 min-w-min">
+                <div className="flex items-center gap-1.5 pb-2 min-w-min">
                   {scene.clips.map((clip, idx) => (
-                    <div key={clip.id} className="flex items-center gap-0">
-                      <TimelineClipCard
-                        clip={clip}
-                        index={idx}
-                        isActive={idx === activeClipIndex}
-                        onSelect={() => handleClipSelect(idx)}
-                      />
-                      {idx < scene.clips.length - 1 && (
-                        <PlusConnector onClick={handleAddClick} variant="between" />
-                      )}
-                    </div>
+                    <TimelineClipCard
+                      key={clip.id}
+                      clip={clip}
+                      index={idx}
+                      isActive={idx === activeClipIndex}
+                      onSelect={() => handleClipSelect(idx)}
+                    />
                   ))}
-                  <div className="w-3" />
+                  <div className="w-2" />
                   <PlusConnector
                     onClick={handleAddClick}
                     variant="end"
@@ -1636,7 +1622,7 @@ export default function SceneStudioPage() {
         </div>
 
         {/* MOBILE LAYOUT (<1024px) — stacked, scrollable */}
-        <div className="lg:hidden pb-32">
+        <div className="lg:hidden pb-8">
           <div className="px-3 sm:px-5 pt-4 sm:pt-5">
             <div className="h-[60vh] max-h-[640px] min-h-[420px] w-full">
               <PreviewPlayer
@@ -1689,24 +1675,20 @@ export default function SceneStudioPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <div className="flex items-center gap-0 px-3 sm:px-5 pb-5 min-w-min">
+                <div className="flex items-center gap-1.5 px-3 sm:px-5 pb-5 min-w-min">
                   {scene.clips.map((clip, idx) => (
-                    <div key={clip.id} className="flex items-center gap-0">
-                      <TimelineClipCard
-                        clip={clip}
-                        index={idx}
-                        isActive={idx === activeClipIndex}
-                        onSelect={() => handleClipSelect(idx)}
-                      />
-                      {idx < scene.clips.length - 1 && (
-                        <PlusConnector onClick={handleAddClick} variant="between" />
-                      )}
-                    </div>
+                    <TimelineClipCard
+                      key={clip.id}
+                      clip={clip}
+                      index={idx}
+                      isActive={idx === activeClipIndex}
+                      onSelect={() => handleClipSelect(idx)}
+                    />
                   ))}
-                  <div className="w-3" />
-                  <div className="hidden lg:block">
-                    <PlusConnector onClick={handleAddClick} variant="end" hasChainOption={canChain} />
-                  </div>
+                  <div className="w-2" />
+                  {/* Inline "Add clip" tile on the same row as the thumbnails,
+                      matching the desktop layout. Replaces the floating + button. */}
+                  <PlusConnector onClick={handleAddClick} variant="end" hasChainOption={canChain} />
                 </div>
               </div>
             )}
@@ -1720,7 +1702,7 @@ export default function SceneStudioPage() {
               <div className="text-[11px] text-zinc-300 leading-relaxed">
                 <span className="font-semibold text-white">Tip: </span>
                 {canChain
-                  ? 'Tap "+" between clips or at the end to chain a seamless continuation from the last frame.'
+                  ? 'Tap "Add clip" at the end of the timeline to chain a seamless continuation from the last frame.'
                   : 'When your clip completes, you can chain the next one from its last frame for cinematic continuity.'}
               </div>
             </div>
@@ -1739,20 +1721,9 @@ export default function SceneStudioPage() {
           )}
         </div>
 
-        {scene.clips.length > 0 && (
-          <button
-            onClick={handleAddClick}
-            className="lg:hidden fixed bottom-6 right-4 z-30 w-14 h-14 rounded-full bg-gradient-to-br from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 active:scale-90 flex items-center justify-center shadow-2xl shadow-purple-500/50 border border-purple-300/30 transition-all"
-            aria-label="Add clip"
-          >
-            <Plus className="w-6 h-6 text-white" strokeWidth={2.5} />
-            {canChain && (
-              <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-blue-500 border-2 border-[#050505] flex items-center justify-center">
-                <Link2 className="w-2.5 h-2.5 text-white" strokeWidth={2.5} />
-              </span>
-            )}
-          </button>
-        )}
+        {/* Floating + button removed — the inline "Add clip" tile in the
+            timeline (above) now serves as the add-clip affordance on both
+            mobile and desktop, in the same row as the thumbnails. */}
       </main>
 
       {/* =================== BACKGROUND MOAT: Last-frame extraction =================== */}

@@ -6,7 +6,7 @@ import Link from 'next/link';
 import {
   Plus, Loader2, Film, ArrowLeft, MoreVertical, Edit2, Trash2,
   Clock, Sparkles, Play, Pause, Link2, Upload, Wand2, Copy,
-  RefreshCw, Image as ImageIcon, Download, Share2, Volume2, Check,
+  RefreshCw, Image as ImageIcon, Download, Share2, Volume2, VolumeX, Check,
   X, Maximize2, FileVideo, AlertCircle, ChevronRight,
 } from 'lucide-react';
 import ClipGenerationModal from '@/components/ClipGenerationModal';
@@ -83,9 +83,14 @@ function PreviewPlayer({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
+  const scrubRef = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
   const [clipTime, setClipTime] = useState(0);
   const [clipDuration, setClipDuration] = useState(0);
+  // While the user is actively scrubbing, the visible bar follows the finger
+  // rather than the video's timeupdate (which lags slightly). null = not scrubbing.
+  const [scrubbingFraction, setScrubbingFraction] = useState<number | null>(null);
+  const [muted, setMuted] = useState(false);
 
   const activeClip = clips[activeClipIndex] || null;
   const nextClip = clips[activeClipIndex + 1] || null;
@@ -107,10 +112,38 @@ function PreviewPlayer({
     : 0;
 
   useEffect(() => {
-    setClipTime(0);
+    // In clip-by-clip mode, switching clips reloads a new src → reset clipTime.
+    // In merged mode, the same merged video keeps playing — DON'T reset, or
+    // the progress bar visually jumps backwards every time the playhead
+    // crosses a clip boundary during auto-sync.
+    if (!useSeamlessMerged) {
+      setClipTime(0);
+    }
     const video = videoRef.current;
     if (!video) return;
-    if (!activeClip?.generated_video_url || activeClip.status !== 'completed') {
+
+    // === Thumbnail-tap → seek merged video to that clip's start ===
+    // When activeClipIndex changes (e.g. user tapped a thumbnail), in merged
+    // mode we seek the merged file to the corresponding scene-time. The 0.6s
+    // tolerance prevents a feedback loop with the auto-sync effect below
+    // (which updates activeClipIndex from the playhead). If we're already
+    // close to the right spot, leave the playhead alone.
+    if (useSeamlessMerged) {
+      let runningTotal = 0;
+      for (let i = 0; i < activeClipIndex; i++) {
+        const c = clips[i];
+        if (c.status === 'completed') runningTotal += c.duration;
+      }
+      if (Math.abs(video.currentTime - runningTotal) > 0.6) {
+        try {
+          video.currentTime = runningTotal;
+        } catch {
+          /* video not yet seekable — will catch up on next render */
+        }
+      }
+    }
+
+    if (!useSeamlessMerged && (!activeClip?.generated_video_url || activeClip.status !== 'completed')) {
       setPlaying(false);
       return;
     }
@@ -120,7 +153,7 @@ function PreviewPlayer({
       }, 80);
       return () => clearTimeout(t);
     }
-  }, [activeClip?.id, activeClip?.generated_video_url, activeClip?.status, autoPlay]);
+  }, [activeClip?.id, activeClip?.generated_video_url, activeClip?.status, autoPlay, useSeamlessMerged, activeClipIndex, clips]);
 
   useEffect(() => {
     if (useSeamlessMerged) return;
@@ -131,6 +164,31 @@ function PreviewPlayer({
       preload.load();
     }
   }, [nextClip?.id, nextClip?.generated_video_url, nextClip?.status, useSeamlessMerged]);
+
+  // === Auto-sync activeClipIndex to playhead during merged playback ===
+  // As the merged video plays, figure out which clip the current scene-time
+  // falls into and update activeClipIndex so the timeline thumbnail follows.
+  // Walks each clip using its actual duration, so it works for any mix of
+  // clip lengths (5s + 10s + 5s + 7s, whatever the user combines).
+  useEffect(() => {
+    if (!useSeamlessMerged) return;
+    if (totalSceneDuration === 0) return;
+    let runningTotal = 0;
+    for (let i = 0; i < clips.length; i++) {
+      const c = clips[i];
+      if (c.status !== 'completed') continue;
+      const clipEnd = runningTotal + c.duration;
+      // Use a tiny epsilon so the LAST clip stays highlighted at the very end
+      // instead of falling off when clipTime === totalSceneDuration.
+      if (clipTime < clipEnd - 0.01 || i === clips.length - 1) {
+        if (i !== activeClipIndex) {
+          setActiveClipIndex(i);
+        }
+        return;
+      }
+      runningTotal = clipEnd;
+    }
+  }, [useSeamlessMerged, clipTime, clips, totalSceneDuration, activeClipIndex, setActiveClipIndex]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -175,16 +233,57 @@ function PreviewPlayer({
     else video.play().catch(() => {});
   };
 
-  const handleSceneScrub = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // === Mute toggle — wires the megaphone button ===
+  const toggleMute = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const newMuted = !video.muted;
+    video.muted = newMuted;
+    setMuted(newMuted);
+  };
+
+  // === Fullscreen — iOS Safari needs the video element's webkitEnterFullscreen
+  // specifically; container-level requestFullscreen doesn't work on iPhone. ===
+  const requestFullscreen = () => {
+    const video = videoRef.current as
+      | (HTMLVideoElement & {
+          webkitEnterFullscreen?: () => void;
+          webkitRequestFullscreen?: () => void;
+        })
+      | null;
+    if (!video) return;
+    if (typeof video.webkitEnterFullscreen === 'function') {
+      video.webkitEnterFullscreen();
+      return;
+    }
+    if (typeof video.requestFullscreen === 'function') {
+      video.requestFullscreen().catch(() => {});
+      return;
+    }
+    if (typeof video.webkitRequestFullscreen === 'function') {
+      video.webkitRequestFullscreen();
+    }
+  };
+
+  // === Seek to a scene-time fraction (0-1). Used by both the scrubber and
+  // by future programmatic seeks. Premiere-style: never forces play or pause. ===
+  const seekToFraction = (fraction: number) => {
     if (totalSceneDuration === 0) return;
-    const targetSceneTime = (parseFloat(e.target.value) / 100) * totalSceneDuration;
+    const clamped = Math.max(0, Math.min(1, fraction));
+    const targetSceneTime = clamped * totalSceneDuration;
 
     if (useSeamlessMerged) {
       const video = videoRef.current;
-      if (video) video.currentTime = targetSceneTime;
+      if (!video) return;
+      try {
+        video.currentTime = targetSceneTime;
+      } catch {
+        /* not yet seekable */
+      }
       return;
     }
 
+    // Clip-by-clip fallback: figure out which clip and seek within it
     let runningTotal = 0;
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i];
@@ -195,15 +294,63 @@ function PreviewPlayer({
           setActiveClipIndex(i);
           setTimeout(() => {
             const video = videoRef.current;
-            if (video) video.currentTime = timeInClip;
+            if (video) {
+              try {
+                video.currentTime = timeInClip;
+              } catch {
+                /* not seekable yet */
+              }
+            }
           }, 100);
         } else {
           const video = videoRef.current;
-          if (video) video.currentTime = timeInClip;
+          if (video) {
+            try {
+              video.currentTime = timeInClip;
+            } catch {
+              /* not seekable yet */
+            }
+          }
         }
         return;
       }
       runningTotal += clip.duration;
+    }
+  };
+
+  // === Scrubber pointer handlers (tap + drag, mouse + touch) ===
+  const fractionFromPointer = (clientX: number): number | null => {
+    const el = scrubRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0) return null;
+    return (clientX - rect.left) / rect.width;
+  };
+
+  const handleScrubPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const fraction = fractionFromPointer(e.clientX);
+    if (fraction === null) return;
+    setScrubbingFraction(Math.max(0, Math.min(1, fraction)));
+    seekToFraction(fraction);
+    // Capture the pointer so drag keeps working even if the finger leaves the bar
+    scrubRef.current?.setPointerCapture(e.pointerId);
+  };
+
+  const handleScrubPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (scrubbingFraction === null) return;
+    const fraction = fractionFromPointer(e.clientX);
+    if (fraction === null) return;
+    setScrubbingFraction(Math.max(0, Math.min(1, fraction)));
+    seekToFraction(fraction);
+  };
+
+  const handleScrubPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (scrubbingFraction === null) return;
+    setScrubbingFraction(null);
+    try {
+      scrubRef.current?.releasePointerCapture(e.pointerId);
+    } catch {
+      /* pointer might already be released */
     }
   };
 
@@ -303,40 +450,53 @@ function PreviewPlayer({
       </div>
 
       <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 sm:p-4">
-        <div className="relative h-1.5 mb-2.5 group/scrub">
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="0.1"
-            value={sceneProgress}
-            onChange={handleSceneScrub}
-            className="absolute inset-0 w-full opacity-0 cursor-pointer z-10"
-          />
-          <div className="absolute inset-0 rounded-full bg-white/15" />
-          {clips
-            .filter((c) => c.status === 'completed')
-            .map((clip, idx, arr) => {
-              if (idx === arr.length - 1) return null;
-              const beforeDuration = arr.slice(0, idx + 1).reduce((s, c) => s + c.duration, 0);
-              const tickPct = (beforeDuration / totalSceneDuration) * 100;
-              return (
+        {(() => {
+          const displayProgress =
+            scrubbingFraction !== null ? scrubbingFraction * 100 : sceneProgress;
+          return (
+            <div
+              ref={scrubRef}
+              onPointerDown={handleScrubPointerDown}
+              onPointerMove={handleScrubPointerMove}
+              onPointerUp={handleScrubPointerUp}
+              onPointerCancel={handleScrubPointerUp}
+              // touch-none stops the browser from interpreting horizontal touch
+              // drags as page scroll, which was eating the scrub gesture entirely.
+              // The negative margin enlarges the touch target without changing
+              // the visual height.
+              className="relative h-3 -my-[3px] mb-2 cursor-pointer touch-none group/scrub"
+            >
+              {/* Visual bar centered inside the larger hit area */}
+              <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 h-1.5">
+                <div className="absolute inset-0 rounded-full bg-white/15" />
+                {clips
+                  .filter((c) => c.status === 'completed')
+                  .map((clip, idx, arr) => {
+                    if (idx === arr.length - 1) return null;
+                    const beforeDuration = arr.slice(0, idx + 1).reduce((s, c) => s + c.duration, 0);
+                    const tickPct = (beforeDuration / totalSceneDuration) * 100;
+                    return (
+                      <div
+                        key={clip.id}
+                        className="absolute top-0 bottom-0 w-px bg-black/50"
+                        style={{ left: `${tickPct}%` }}
+                      />
+                    );
+                  })}
                 <div
-                  key={clip.id}
-                  className="absolute top-0 bottom-0 w-px bg-black/50"
-                  style={{ left: `${tickPct}%` }}
+                  className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-purple-400 to-blue-400 transition-[width] duration-100"
+                  style={{ width: `${displayProgress}%` }}
                 />
-              );
-            })}
-          <div
-            className="absolute left-0 top-0 h-full rounded-full bg-gradient-to-r from-purple-400 to-blue-400 transition-all duration-100"
-            style={{ width: `${sceneProgress}%` }}
-          />
-          <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg opacity-0 group-hover/scrub:opacity-100 transition-opacity"
-            style={{ left: `calc(${sceneProgress}% - 6px)` }}
-          />
-        </div>
+                <div
+                  className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg transition-opacity ${
+                    scrubbingFraction !== null ? 'opacity-100' : 'opacity-0 group-hover/scrub:opacity-100'
+                  }`}
+                  style={{ left: `calc(${displayProgress}% - 6px)` }}
+                />
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
@@ -355,16 +515,21 @@ function PreviewPlayer({
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <button className="w-8 h-8 rounded-full hover:bg-white/15 transition-colors flex items-center justify-center">
-              <Volume2 className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
+            <button
+              onClick={toggleMute}
+              className="w-8 h-8 rounded-full hover:bg-white/15 transition-colors flex items-center justify-center"
+              aria-label={muted ? 'Unmute' : 'Mute'}
+            >
+              {muted ? (
+                <VolumeX className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
+              ) : (
+                <Volume2 className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
+              )}
             </button>
             <button
-              onClick={() => {
-                if (videoRef.current?.requestFullscreen) {
-                  videoRef.current.requestFullscreen();
-                }
-              }}
+              onClick={requestFullscreen}
               className="w-8 h-8 rounded-full hover:bg-white/15 transition-colors flex items-center justify-center"
+              aria-label="Fullscreen"
             >
               <Maximize2 className="w-3.5 h-3.5 text-white/80" strokeWidth={2} />
             </button>

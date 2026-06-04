@@ -197,6 +197,17 @@ function PreviewPlayer({
   //
   // Skipped while a user-initiated seek is in flight (seekingRef=true), so
   // we don't fight the seek with stale clipTime data.
+  //
+  // We read activeClipIndex via a ref (not closure) so the comparison
+  // `i !== current` is always against the FRESHEST value. With closure-based
+  // reads, the effect could see a stale activeClipIndex from a prior render
+  // and call setActiveClipIndex(i) repeatedly even though state already
+  // equals i — that was the "dancing thumbnails" bug.
+  const activeClipIndexRef = useRef(activeClipIndex);
+  useEffect(() => {
+    activeClipIndexRef.current = activeClipIndex;
+  }, [activeClipIndex]);
+
   useEffect(() => {
     if (!useSeamlessMerged) return;
     if (totalSceneDuration === 0) return;
@@ -210,14 +221,15 @@ function PreviewPlayer({
       // Pick this clip if playhead is inside its range, OR if it's the last
       // clip and the playhead is at or past its end (end-of-scene).
       if (clipTime < clipEnd || i === clips.length - 1) {
-        if (i !== activeClipIndex) {
+        if (i !== activeClipIndexRef.current) {
           setActiveClipIndex(i);
         }
         return;
       }
       runningTotal = clipEnd;
     }
-  }, [useSeamlessMerged, clipTime, clips, totalSceneDuration, activeClipIndex, setActiveClipIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useSeamlessMerged, clipTime, clips, totalSceneDuration]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -1423,10 +1435,10 @@ export default function SceneStudioPage() {
     setAutoPlayActiveClip(false);
   };
 
-  const handleAdvanceFromPlayer = (newIdx: number) => {
+  const handleAdvanceFromPlayer = useCallback((newIdx: number) => {
     setAutoPlayActiveClip(true);
     setActiveClipIndexState(newIdx);
-  };
+  }, []);
 
   // Default "+" tap (timeline + buttons, floating + button) — opens action sheet.
   // User then picks from "Continue from previous", "Upload new reference", etc.

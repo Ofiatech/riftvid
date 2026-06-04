@@ -13,6 +13,7 @@ import ClipGenerationModal from '@/components/ClipGenerationModal';
 import { useSceneMerge } from '@/lib/useSceneMerge';
 import MergeStatusBadge from '@/components/MergeStatusBadge';
 import LastFrameExtractor from '@/components/LastFrameExtractor';
+import ExportSheet from '@/components/ExportSheet';
 
 interface ClipItem {
   id: string;
@@ -1314,6 +1315,7 @@ export default function SceneStudioPage() {
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [addActionSheetOpen, setAddActionSheetOpen] = useState(false);
   const [clipDrawerOpen, setClipDrawerOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [sceneMenuOpen, setSceneMenuOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState('');
@@ -1696,8 +1698,9 @@ export default function SceneStudioPage() {
 
           <div className="flex items-center gap-1.5 shrink-0">
             <button
-              onClick={() => alert('🚧 Export coming next session — merged scenes + clips download.')}
+              onClick={() => setExportOpen(true)}
               className="flex items-center gap-1.5 h-9 px-3 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[12px] font-semibold shadow-lg shadow-purple-500/30 transition-all active:scale-95"
+              aria-label="Export this scene"
             >
               <Share2 className="w-3 h-3" strokeWidth={2.5} />
               <span className="hidden sm:inline">Export</span>
@@ -1998,6 +2001,31 @@ export default function SceneStudioPage() {
           onDownload={handleDownloadClip}
         />
       </div>
+
+      <ExportSheet
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        mode="scene"
+        scenes={[
+          {
+            id: scene.id,
+            name: scene.name,
+            sceneOrder: scene.scene_order,
+            totalDuration: scene.total_duration,
+            // Live merge hook is the source of truth here — its status reflects
+            // any in-flight merges that haven't yet been persisted to the DB.
+            mergeStatus: merge.status,
+            mergedVideoUrl: merge.mergedVideoUrl,
+          },
+        ]}
+        tier={profile?.subscription_tier ?? 'free'}
+        onUpgradeClick={() => {
+          // PHASE 2 — wire to Flutterwave tier picker
+          alert(
+            '🚀 Upgrade coming next — Flutterwave checkout is being built right after Export.'
+          );
+        }}
+      />
     </div>
   );
 }

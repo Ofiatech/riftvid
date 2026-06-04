@@ -5,11 +5,12 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   Plus, RefreshCw, Loader2, Film, ArrowLeft, Menu, MoreVertical,
-  Edit2, Trash2, Clock, Sparkles,
+  Edit2, Trash2, Clock, Sparkles, Share2,
 } from 'lucide-react';
 import Sidebar, { UserProfileData } from '@/components/Sidebar';
 import SceneCard from '@/components/SceneCard';
 import NewSceneModal from '@/components/NewSceneModal';
+import ExportSheet from '@/components/ExportSheet';
 
 interface SceneItem {
   id: string;
@@ -20,6 +21,10 @@ interface SceneItem {
   total_duration: number;
   status: string;
   cover_clip_id: string | null;
+  // Merge fields — used by ExportSheet to know which scenes are ready to share.
+  // The /api/projects/[id] GET already returns these from the DB.
+  merge_status: string | null;
+  merged_video_url: string | null;
 }
 
 interface ProjectDetail {
@@ -58,6 +63,7 @@ export default function ProjectDetailPage() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -233,6 +239,15 @@ export default function ProjectDetailPage() {
 
             <div className="flex items-center gap-2 shrink-0 ml-auto">
               <button
+                onClick={() => setExportOpen(true)}
+                disabled={!project || project.scenes.length === 0}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-[#1f2937] hover:border-[#2d3748] text-white text-[13px] font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Export project"
+              >
+                <Share2 className="w-3.5 h-3.5" strokeWidth={2} />
+                <span className="hidden sm:inline">Export</span>
+              </button>
+              <button
                 onClick={() => setModalOpen(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all"
               >
@@ -394,6 +409,30 @@ export default function ProjectDetailPage() {
         projectId={projectId}
         nextSceneNumber={nextSceneNumber}
         onCreated={handleSceneCreated}
+      />
+
+      <ExportSheet
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        mode="project"
+        projectName={project.name}
+        scenes={project.scenes.map((s) => ({
+          id: s.id,
+          name: s.name,
+          sceneOrder: s.scene_order,
+          totalDuration: s.total_duration,
+          mergeStatus: s.merge_status ?? 'idle',
+          mergedVideoUrl: s.merged_video_url,
+        }))}
+        tier={profile?.subscription_tier ?? 'free'}
+        onUpgradeClick={() => {
+          // PHASE 2 — wire to Flutterwave tier picker
+          // For now, just acknowledge with a placeholder. This gets replaced
+          // by the real TierPickerModal once payments are wired.
+          alert(
+            '🚀 Upgrade coming next — Flutterwave checkout is being built right after Export.'
+          );
+        }}
       />
     </div>
   );

@@ -1,144 +1,131 @@
+/**
+ * GET /api/checkout/verify?tx_ref=xxx
+ *
+ * REPLACES the Korapay verify endpoint.
+ *
+ * Read-only status reporter for the post-payment verify page.
+ *
+ * IMPORTANT: this endpoint does NOT grant credits or update tier.
+ * That's the WEBHOOK's job (see /api/webhooks/flutterwave/route.ts).
+ * The webhook has 6 layers of defense and is the single source of truth.
+ *
+ * This endpoint just reports what the webhook has done so far:
+ *   - 'verified'  → webhook confirmed payment, tier+credits granted
+ *   - 'pending'   → user paid on Flutterwave, webhook hasn't arrived yet
+ *   - 'failed'    → webhook marked it failed (or never arrived for a real payment)
+ *   - 'not_found' → tx_ref doesn't match anything we created
+ *
+ * The frontend polls this every 2s for up to 30s, waiting for 'verified'.
+ * If still 'pending' after 30s, the frontend tells the user to check their
+ * dashboard in a few minutes — the webhook will eventually fire.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { getSupabaseAdmin } from '@/lib/supabase-server';
-import { verifyTransaction } from '@/lib/korapay';
-import { getOrCreateProfile } from '@/lib/credits';
 
-export const maxDuration = 30;
+export const maxDuration = 15;
+export const dynamic = 'force-dynamic';
 
-// GET /api/checkout/verify?reference=xxx — verify a payment and add credits
-export async function GET(req: NextRequest) {
+interface VerifyResponse {
+  status: 'verified' | 'pending' | 'failed' | 'not_found';
+  tier?: string;
+  amount?: number;
+  currency?: string;
+  creditsGranted?: number;
+  newBalance?: number;
+  billingInterval?: string;
+  error?: string;
+}
+
+export async function GET(req: NextRequest): Promise<NextResponse<VerifyResponse>> {
   try {
+    // ─── Auth ───────────────────────────────────────────────────────────
     const { userId } = await auth();
     if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const reference = req.nextUrl.searchParams.get('reference');
-    if (!reference) {
-      return NextResponse.json({ error: 'Reference required' }, { status: 400 });
-    }
-
-    const supabase = getSupabaseAdmin();
-
-    // Look up our transaction record
-    const { data: transaction, error: fetchError } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('korapay_reference', reference)
-      .eq('user_id', userId)
-      .single();
-
-    if (fetchError || !transaction) {
       return NextResponse.json(
-        { error: 'Transaction not found' },
-        { status: 404 }
+        { status: 'failed', error: 'Unauthorized' },
+        { status: 401 }
       );
     }
 
-    // Idempotency: if already completed, return success without re-processing
-    if (transaction.status === 'completed') {
-      return NextResponse.json({
-        status: 'already_completed',
-        credits_added: transaction.credits_delta,
-        message: 'Credits already applied to your account',
-      });
-    }
-
-    // If already failed, return error
-    if (transaction.status === 'failed') {
+    // ─── Read tx_ref from query string ──────────────────────────────────
+    const txRef = req.nextUrl.searchParams.get('tx_ref');
+    if (!txRef) {
       return NextResponse.json(
-        { status: 'failed', error: 'This payment was previously marked failed' },
+        { status: 'failed', error: 'tx_ref query parameter required' },
         { status: 400 }
       );
     }
 
-    // Verify with Korapay
-    let korapayResult;
-    try {
-      korapayResult = await verifyTransaction(reference);
-    } catch (verifyError) {
-      console.error('Korapay verify error:', verifyError);
+    // ─── Look up the transaction ────────────────────────────────────────
+    const supabase = getSupabaseAdmin();
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('tx_ref', txRef)
+      .eq('user_id', userId) // critical: a user can only verify their own transactions
+      .maybeSingle();
+
+    if (txErr) {
+      console.error('[Verify] tx lookup error:', txErr);
       return NextResponse.json(
-        {
-          error:
-            verifyError instanceof Error
-              ? verifyError.message
-              : 'Failed to verify with Korapay',
-        },
+        { status: 'failed', error: 'Database error' },
         { status: 500 }
       );
     }
 
-    const korapayStatus = korapayResult.data.status;
+    if (!tx) {
+      // Either tx_ref doesn't exist, or it belongs to a different user.
+      // Don't leak which — both look the same to the client.
+      return NextResponse.json({
+        status: 'not_found',
+        error: 'Transaction not found',
+      });
+    }
 
-    // Handle Korapay status
-    if (korapayStatus === 'success') {
-      // Get or create user profile
-      const profile = await getOrCreateProfile(userId);
-      const newBalance = profile.credits_balance + transaction.credits_delta;
-      const newLifetimePurchased =
-        profile.credits_lifetime_purchased + transaction.credits_delta;
-
-      // Add credits to user balance
-      const { error: updateError } = await supabase
+    // ─── Report status based on DB state ────────────────────────────────
+    if (tx.status === 'verified') {
+      // Webhook has confirmed and granted. Fetch current balance for display.
+      const { data: profile } = await supabase
         .from('profiles')
-        .update({
-          credits_balance: newBalance,
-          credits_lifetime_purchased: newLifetimePurchased,
-        })
-        .eq('user_id', userId);
-
-      if (updateError) {
-        console.error('Credit update error:', updateError);
-        return NextResponse.json(
-          { error: 'Failed to update credits' },
-          { status: 500 }
-        );
-      }
-
-      // Mark transaction completed
-      await supabase
-        .from('transactions')
-        .update({
-          status: 'completed',
-          korapay_transaction_id: korapayResult.data.reference,
-        })
-        .eq('id', transaction.id);
+        .select('credits_balance')
+        .eq('user_id', userId)
+        .single();
 
       return NextResponse.json({
-        status: 'success',
-        credits_added: transaction.credits_delta,
-        new_balance: newBalance,
-        amount: korapayResult.data.amount,
-        currency: korapayResult.data.currency,
+        status: 'verified',
+        tier: tx.tier,
+        amount: parseFloat(String(tx.amount)),
+        currency: tx.currency,
+        creditsGranted: tx.credits_granted ?? 0,
+        newBalance: profile?.credits_balance ?? 0,
+        billingInterval: tx.billing_interval,
       });
     }
 
-    if (korapayStatus === 'processing') {
+    if (tx.status === 'failed') {
       return NextResponse.json({
-        status: 'processing',
-        message: 'Payment is still being processed. Please wait a moment and refresh.',
+        status: 'failed',
+        error: 'Payment verification failed. If you were charged, contact support.',
       });
     }
 
-    // Failed or expired
-    await supabase
-      .from('transactions')
-      .update({ status: 'failed' })
-      .eq('id', transaction.id);
-
+    // tx.status === 'pending' — payment in flight, webhook hasn't arrived
+    return NextResponse.json({
+      status: 'pending',
+      tier: tx.tier,
+      amount: parseFloat(String(tx.amount)),
+      currency: tx.currency,
+      billingInterval: tx.billing_interval,
+    });
+  } catch (error) {
+    console.error('[Verify] Unexpected error:', error);
     return NextResponse.json(
       {
         status: 'failed',
-        error: `Payment ${korapayStatus}`,
+        error: error instanceof Error ? error.message : 'Server error',
       },
-      { status: 400 }
-    );
-  } catch (error) {
-    console.error('Verify error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Server error' },
       { status: 500 }
     );
   }

@@ -14,6 +14,7 @@ import { useSceneMerge } from '@/lib/useSceneMerge';
 import MergeStatusBadge from '@/components/MergeStatusBadge';
 import LastFrameExtractor from '@/components/LastFrameExtractor';
 import ExportSheet from '@/components/ExportSheet';
+import TierPickerModal from '@/components/TierPickerModal';
 
 interface ClipItem {
   id: string;
@@ -1316,6 +1317,7 @@ export default function SceneStudioPage() {
   const [addActionSheetOpen, setAddActionSheetOpen] = useState(false);
   const [clipDrawerOpen, setClipDrawerOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [sceneMenuOpen, setSceneMenuOpen] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState('');
@@ -2020,11 +2022,15 @@ export default function SceneStudioPage() {
         ]}
         tier={profile?.subscription_tier ?? 'free'}
         onUpgradeClick={() => {
-          // PHASE 2 — wire to Flutterwave tier picker
-          alert(
-            '🚀 Upgrade coming next — Flutterwave checkout is being built right after Export.'
-          );
+          setExportOpen(false);
+          setUpgradeOpen(true);
         }}
+      />
+
+      <TierPickerModal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        currentTier={profile?.subscription_tier ?? 'free'}
       />
     </div>
   );

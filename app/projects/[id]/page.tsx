@@ -11,6 +11,7 @@ import Sidebar, { UserProfileData } from '@/components/Sidebar';
 import SceneCard from '@/components/SceneCard';
 import NewSceneModal from '@/components/NewSceneModal';
 import ExportSheet from '@/components/ExportSheet';
+import TierPickerModal from '@/components/TierPickerModal';
 
 interface SceneItem {
   id: string;
@@ -64,6 +65,7 @@ export default function ProjectDetailPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -426,13 +428,15 @@ export default function ProjectDetailPage() {
         }))}
         tier={profile?.subscription_tier ?? 'free'}
         onUpgradeClick={() => {
-          // PHASE 2 — wire to Flutterwave tier picker
-          // For now, just acknowledge with a placeholder. This gets replaced
-          // by the real TierPickerModal once payments are wired.
-          alert(
-            '🚀 Upgrade coming next — Flutterwave checkout is being built right after Export.'
-          );
+          setExportOpen(false);
+          setUpgradeOpen(true);
         }}
+      />
+
+      <TierPickerModal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        currentTier={profile?.subscription_tier ?? 'free'}
       />
     </div>
   );

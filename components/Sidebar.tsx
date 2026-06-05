@@ -12,15 +12,21 @@ export interface UserProfileData {
   credits_balance: number;
   credits_lifetime_purchased: number;
   credits_lifetime_used: number;
-  subscription_tier: 'free' | 'creator' | 'pro' | 'team';
+  // 'team' kept as deprecated alias for any historical DB rows.
+  // New code writes 'studio' (matches ROADMAP.md).
+  subscription_tier: 'free' | 'creator' | 'pro' | 'studio' | 'team';
   subscription_status: string;
 }
 
+// Monthly credit allowance per tier — matches lib/flutterwave.ts PRICING.
+// 'team' is a legacy alias for 'studio' that we keep so any DB rows from
+// before the rename still display correctly.
 function getMaxCreditsForTier(tier: string): number {
   switch (tier) {
     case 'creator': return 50;
-    case 'pro': return 150;
-    case 'team': return 500;
+    case 'pro': return 200;
+    case 'studio': return 800;
+    case 'team': return 800; // legacy alias
     default: return 5;
   }
 }
@@ -29,7 +35,8 @@ function getTierLabel(tier: string): string {
   switch (tier) {
     case 'creator': return 'Creator';
     case 'pro': return 'Pro';
-    case 'team': return 'Team';
+    case 'studio': return 'Studio';
+    case 'team': return 'Studio'; // legacy alias
     default: return 'Free';
   }
 }
@@ -38,9 +45,12 @@ interface SidebarProps {
   open: boolean;
   onClose: () => void;
   profile: UserProfileData | null;
+  // NEW: parent passes a handler to open the tier picker modal.
+  // Optional so older callers don't break — falls back to a no-op.
+  onUpgradeClick?: () => void;
 }
 
-export default function Sidebar({ open, onClose, profile }: SidebarProps) {
+export default function Sidebar({ open, onClose, profile, onUpgradeClick }: SidebarProps) {
   const { user } = useUser();
   const pathname = usePathname();
   const displayName = user?.fullName || user?.firstName || user?.username || 'Creator';
@@ -67,6 +77,18 @@ export default function Sidebar({ open, onClose, profile }: SidebarProps) {
     if (href === '/studio') return pathname === '/studio' || pathname.startsWith('/studio/');
     if (href === '/projects') return pathname === '/projects' || pathname.startsWith('/projects/');
     return false;
+  };
+
+  // Handler for the credits button. If parent didn't pass onUpgradeClick
+  // (legacy callers), do nothing rather than throwing.
+  const handleUpgradeClick = () => {
+    if (onUpgradeClick) {
+      onUpgradeClick();
+      // On mobile, close the sidebar so the modal isn't hidden under it.
+      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+        onClose();
+      }
+    }
   };
 
   return (
@@ -151,7 +173,10 @@ export default function Sidebar({ open, onClose, profile }: SidebarProps) {
                   style={{ width: `${progressPct}%` }}
                 />
               </div>
-              <button className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-zinc-200 transition-colors">
+              <button
+                onClick={handleUpgradeClick}
+                className="mt-3 w-full text-[12px] py-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.10] border border-white/[0.06] text-zinc-200 transition-colors"
+              >
                 {credits === 0 ? 'Get more credits' : 'Upgrade plan'}
               </button>
             </div>
@@ -187,3 +212,5 @@ export default function Sidebar({ open, onClose, profile }: SidebarProps) {
     </>
   );
 }
+
+// === END OF FILE — if you can see this line, the file saved completely ===

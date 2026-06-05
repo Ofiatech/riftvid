@@ -5,6 +5,7 @@ import { Plus, RefreshCw, Loader2, Film, Search, Bell, Menu, Sparkles } from 'lu
 import Sidebar, { UserProfileData } from '@/components/Sidebar';
 import ProjectCard from '@/components/ProjectCard';
 import NewProjectModal from '@/components/NewProjectModal';
+import TierPickerModal from '@/components/TierPickerModal';
 import { useRouter } from 'next/navigation';
 
 interface ProjectListItem {
@@ -23,6 +24,7 @@ export default function StudioPage() {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<UserProfileData | null>(null);
@@ -86,6 +88,7 @@ export default function StudioPage() {
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         profile={profile}
+        onUpgradeClick={() => setUpgradeOpen(true)}
       />
       <main className="lg:ml-64 relative z-[1]">
         {/* Topbar */}
@@ -204,6 +207,14 @@ export default function StudioPage() {
         onClose={() => setModalOpen(false)}
         onCreated={handleCreated}
       />
+
+      <TierPickerModal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        currentTier={profile?.subscription_tier ?? 'free'}
+      />
     </div>
   );
 }
+
+// === END OF FILE — if you can see this line, the file saved completely ===

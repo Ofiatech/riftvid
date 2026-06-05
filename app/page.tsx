@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import RiftFeedbackButton from '@/components/RiftFeedbackButton';
 import Sidebar, { UserProfileData } from '@/components/Sidebar';
+import TierPickerModal from '@/components/TierPickerModal';
 
 type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
@@ -311,7 +312,7 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onProfileUpdate }: { open: boolean; onClose: () => void; onGenerationComplete: () => void; profile: UserProfileData | null; onProfileUpdate: () => void }) {
+function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onProfileUpdate, onUpgradeClick }: { open: boolean; onClose: () => void; onGenerationComplete: () => void; profile: UserProfileData | null; onProfileUpdate: () => void; onUpgradeClick: () => void }) {
   const [useUrl, setUseUrl] = useState(false);
   const [aiOptimization, setAiOptimization] = useState(true);
   const [prompt, setPrompt] = useState('');
@@ -629,7 +630,7 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
               </div>
               <div className="flex items-center justify-center gap-2">
                 <button onClick={handleClose} className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">Maybe later</button>
-                <button onClick={() => alert('Payments coming soon! 🚀')} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white text-[13px] font-semibold shadow-lg shadow-amber-500/30 transition-all">
+                <button onClick={() => { handleClose(); onUpgradeClick(); }} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-white text-[13px] font-semibold shadow-lg shadow-amber-500/30 transition-all">
                   <Zap className="w-3.5 h-3.5" strokeWidth={2.25} />
                   Get more credits
                 </button>
@@ -1093,6 +1094,7 @@ export default function Dashboard() {
   const [videosLoading, setVideosLoading] = useState(true);
   const [previewVideo, setPreviewVideo] = useState<VideoData | null>(null);
   const [profile, setProfile] = useState<UserProfileData | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   const fetchProfile = useCallback(async () => {
     try {
@@ -1168,7 +1170,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white relative">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} profile={profile} />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} profile={profile} onUpgradeClick={() => setUpgradeOpen(true)} />
       <main className="lg:ml-64 relative z-[1]">
         <Topbar onNewGeneration={() => setModalOpen(true)} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
@@ -1229,8 +1231,15 @@ export default function Dashboard() {
           <div className="h-16" />
         </div>
       </main>
-      <NewGenerationModal open={modalOpen} onClose={() => setModalOpen(false)} onGenerationComplete={fetchVideos} profile={profile} onProfileUpdate={fetchProfile} />
+      <NewGenerationModal open={modalOpen} onClose={() => setModalOpen(false)} onGenerationComplete={fetchVideos} profile={profile} onProfileUpdate={fetchProfile} onUpgradeClick={() => setUpgradeOpen(true)} />
       <VideoPreviewModal video={previewVideo} onClose={() => setPreviewVideo(null)} onDownload={handleDownloadFromPreview} />
+      <TierPickerModal
+        open={upgradeOpen}
+        onClose={() => setUpgradeOpen(false)}
+        currentTier={profile?.subscription_tier ?? 'free'}
+      />
     </div>
   );
 }
+
+// === END OF FILE — if you can see this line, the file saved completely ===

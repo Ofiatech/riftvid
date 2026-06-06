@@ -1,9 +1,41 @@
 # Riftvid Roadmap 🎬
 
 > Founder: Nweze Michael (Ofiatech) 🇳🇬
-> Last updated: May 2026
-> Status: Pre-launch · Stealth-build mode
+> Last updated: June 2026
+> Status: Pre-launch · Final polish before external eyes
 > Live URL: https://riftvid.vercel.app
+
+---
+
+## 🛡️ THE DISCIPLINE CONTRACT
+
+**This roadmap is the single source of truth.** It's what gets built, in what order, with what scope.
+
+### Rules I (Claude) will enforce:
+
+1. **No drift without acknowledgment.** If the founder proposes something not on this roadmap, I will STOP and ask:
+   - (a) Park as a future idea?
+   - (b) Swap with something currently planned?
+   - (c) Insist on a full planning session to add it?
+   No code is written until the founder answers.
+
+2. **A "full planning session" means** — we discuss scope, dependencies, timing, what it bumps off the list, and the founder saves a ROADMAP update before any code happens.
+
+3. **The founder can ALWAYS insist.** It's the founder's product. But I will explicitly call out the drift cost: "This delays launch by X sessions, bumps Y feature back to Phase Z." Override knowingly, not accidentally.
+
+4. **Strategic conversations are OK anytime.** Discussion isn't drift. Drift is committing to BUILD something not on the roadmap.
+
+5. **Every session should end with a roadmap status check.** What got done? What's next? Any drift to log? Updates saved?
+
+6. **Adding scope = removing scope.** No infinite list growth. If something gets added to Phase 4, something else must move out of Phase 4. Time budgets are finite.
+
+### Rules the founder agrees to:
+
+1. **No mid-session pivots without `[full planning session]` flag.** If something feels urgent and new, say "I want a full planning session on X" — we pause work, plan, update roadmap, then continue.
+
+2. **Trust the order.** If we said Avatars comes before Voices, don't slip into "let me just quickly add a voice feature first." That's drift.
+
+3. **Big ideas get parked, not built.** Big ideas (Production Studio is a perfect example) belong in Future Phases, NOT in active work.
 
 ---
 
@@ -13,104 +45,314 @@
 
 Voice/accent diversity, Nigerian Gen Z aesthetics, scene-based storytelling — these aren't features, they're identity.
 
-**Long-term positioning:** Final Cut Pro for AI-generated narrative content, with character consistency built in from script.
+**Long-term positioning:** The conversational AI creative partner for video — for both narrative storytelling (Rift Studio) and commercial production (Production Studio).
 
 ---
 
-## Phase 1 — Core MVP ✅ SHIPPED
+## ✅ ALREADY SHIPPED (Phases 1–3)
 
-**Goal:** Generate ONE 10-second video from image + prompt, polished end-to-end.
+### Phase 1 — Core MVP
+- Premium dashboard UI (Apple × HeyGen aesthetic)
+- Clerk authentication (Google + Email)
+- Vercel deployment + auth-protected routes
+- Mobile-responsive sidebar
+- Rift Assistant v3 with vision (image understanding + scene-specific questions)
+- Anti-glitch + audio safeguards in prompt synthesis
+- Real video generation (Grok Imagine via Fal.ai) with native audio + lip-sync
+- Render progress UI + status polling
+- Auto aspect ratio matching
+- Rift Feedback Logger for v4 improvement data
 
-- [x] Premium dashboard UI (Apple × HeyGen aesthetic)
-- [x] Clerk authentication (Google + Email)
-- [x] Vercel deployment + auth-protected routes
-- [x] Mobile-responsive HeyGen-style sidebar
-- [x] Rift Assistant with vision (sees uploaded images)
-- [x] Dynamic chat flow with custom answer fallback
-- [x] File picker with thumbnail preview
-- [x] OpenAI integration for prompt refinement
-- [x] Real video generation API (Grok Imagine via Fal.ai)
-- [x] Render progress UI + job status polling
-- [x] User video library with Supabase persistence
-- [x] Apple-grade animations + UX polish
-- [x] Native audio enabled (Grok Imagine — Phase 4 audio delivered EARLY)
-- [x] Auto aspect ratio matching (videos match source dimensions)
-- [x] Rift Assistant v3 with anti-glitch + audio safeguards
-- [x] Rift Feedback Logger (data collection for v4 improvements)
+### Phase 2 — Library, Storage, Polish
+- Real video library (Supabase persistence)
+- Storage for generated MP4s
+- Apple-style modal animations
+- Search, filter, delete in library
+- Real-time generation status updates
 
----
+### Phase 3 — Monetization (Flutterwave)
+- Credits system (balance, deduction, automatic refunds on failure)
+- 5 free credits on signup
+- Out-of-credits state with upgrade prompt
+- **Flutterwave payments LIVE** (replaced Korapay)
+  - KYC verified, live mode active
+  - USD + NGN dual currency with geo auto-detection
+  - Both subscription (monthly auto-renew) and one-time (30-day) billing
+  - 6-layer webhook security
+  - Renewal path with subscription_customer_id lookup
+  - Credits roll over forever (never expire — trust signal/moat)
+- TierPickerModal with sidebar wiring across all pages
+- 'team' → 'studio' tier naming standardization
 
-## Phase 2 — Library, Storage, Polish ✅ SHIPPED
-
-- [x] Real video library replacing mock data
-- [x] Supabase tables (videos, profiles, transactions)
-- [x] Supabase storage for generated MP4s
-- [x] Apple-style animations across modals
-- [x] Search, filter, delete in library
-- [x] Real-time status updates for in-progress generations
-
----
-
-## Phase 3 — Monetization Foundation 🚧 IN PROGRESS
-
-**Goal:** People can pay. Riftvid earns revenue from day one of launch.
-
-### Stage 1: Credits System ✅ SHIPPED
-- [x] Credits balance tracking per user
-- [x] 5 free credits on signup
-- [x] Credit deduction on generation
-- [x] Automatic refunds on failed generations
-- [x] Transaction log
-- [x] Out-of-credits state with upgrade prompt
-
-### Stage 2: Korapay Payments 🚧 IN PROGRESS
-**Note:** Switched from Stripe → Korapay for Nigerian-friendly USD + NGN support.
-
-- [x] Korapay backend infrastructure installed (5 files)
-- [x] Pricing tiers configured in code
-- [x] Checkout API endpoints
-- [x] Verification page
-- [ ] Korapay KYC verification (pending — waiting on Korapay)
-- [ ] Buy Credits modal (frontend — waiting for keys)
-- [ ] Webhook handler with HMAC verification
-- [ ] Sidebar buttons wired ("Get more credits", "Upgrade plan")
-
-### Pricing Tiers (Final)
-
-| Tier | Price | Credits | Notes |
-|------|-------|---------|-------|
-| 🆓 Free | $0 | 5 one-time | New user trial |
-| 🎬 Creator | $9.99/mo | 50 | Audio enabled, basic features |
-| 🚀 Pro | $29.99/mo | 200 | Premium models access |
-| 🎥 Studio | $99/mo | 800 | Episode mode + character consistency (Phase 5+) |
-| 🏆 Studio Pro | $299/mo | Unlimited | Long episodes + agencies (Phase 6+) |
-
-### Credit Packs (Top-ups)
-| Pack | USD | NGN | Credits |
-|------|-----|-----|---------|
-| Starter | $4.99 | ₦7,000 | 25 |
-| Creator | $9.99 | ₦14,000 | 75 |
-| Pro | $24.99 | ₦35,000 | 250 |
+### Phase 3.5 — Sequencer v1 (Manual Builder) + Export
+- 3-level hierarchy: Projects → Scenes → Clips
+- Scene-first manual builder
+- Last-frame chaining between clips (continuity)
+- Cinematic Studio Editor v3 (Premiere Pro-style desktop, CapCut-style mobile)
+- Server-side merge via Cloudinary
+- Export feature (ExportSheet drawer with Web Share API)
+- Tier-gated export (Free can't export, Creator+ can)
 
 ---
 
-## Phase 4 — Audio Integration ✅ SHIPPED EARLY
+## 🎯 PRICING TIERS (Canonical)
 
-**Originally planned for later. Delivered via Grok Imagine swap.**
+| Tier | USD | NGN | Credits/refill | Export | Audio | Notes |
+|------|-----|-----|---------------|--------|-------|-------|
+| 🆓 Free | $0 | ₦0 | 5 (one-time) | ❌ | ❌ | Signup trial |
+| 🎬 Creator | $9.99/mo | ₦14,000 | 50/mo | ✅ | ✅ | Entry tier |
+| 🚀 Pro | $29.99/mo | ₦42,000 | 200/mo | ✅ | ✅ | + Premium models, AI Director (Phase 5) |
+| 🎥 Studio | $99/mo | ₦140,000 | 800/mo | ✅ | ✅ | + Episode mode (Phase 5+) |
 
-- [x] Native audio + lip-sync (Grok Imagine)
-- [x] Ambient sounds + dialogue
-- [x] Character voice in clips
-- [x] African accent handling (Grok trained on diverse data)
+**Credit costs:** 5s clip = 1 credit, 10s clip = 2 credits. Tier subscription extends 30 days from purchase or last renewal. Unused credits roll over forever.
+
+**Credit packs (Phase 4.5+):** Top-up packs deferred — Korapay legacy code preserved for revival when needed.
 
 ---
 
-## Phase 5 — Sequencer 🎬 (THE MOAT)
+## 🚀 PHASE 4 — LAUNCH PREP (CURRENT)
 
-**Codename:** Working title — "Rift Sequence" or "StoryRift" (TBD)
+**Goal:** Every visible UI element does something real OR is intentionally hidden. No half-working features visible to external users.
 
-**The big idea:** Most AI models cap at 10 seconds per video. Riftvid lets creators generate FULL stories by chaining scenes together.
+**Launch criteria:** Founder is comfortable showing Riftvid to anyone, anywhere, and not having to apologize for broken/incomplete features.
 
-### Sequencer v1 — LOCKED PLAN (Path C, May 2026)
+### 🎬 PRE-LAUNCH PUNCH LIST (in build order)
 
-**Architecture: 3-Level Hierarchy** (matches Hollywood production structure)
+#### 4.1 — Today's session (already in progress)
+- [x] Flutterwave payments live (Phase 3 complete)
+- [x] Sidebar Upgrade button wired to TierPickerModal (all pages)
+- [x] 'team' → 'studio' tier naming fixed in Sidebar
+- [x] Decision: PhotoRoom Product Animator replaces Digital Twin permanently
+- [ ] **ROADMAP.md updated** ← we are here
+- [ ] **Dashboard hero reshuffle:**
+  - Demote "Create Cinematic Magic" → wire as the **Image to Motion** tool card below
+  - Promote **Rift Studio** to Hero 1 (NO video animations today — keep basic UI style matching current; cinematic backgrounds polished later in 4.9)
+  - Add **Production Studio Hero 2** — basic UI matching Rift Studio hero style, HIDDEN behind `SHOW_PRODUCTION_STUDIO=false` feature flag
+  - Replace Digital Twin tool card with **Product Animator** placeholder (tile only, full build comes in 4.7)
+- [ ] **Wire Image to Motion tool card** → opens existing "Create Cinematic Magic" generation modal
+- [ ] **Back button bug** — investigate (likely small fix, may be Next.js routing config)
+
+#### 4.2 — Rift Studio polish + finish manual builder
+- [ ] Stress test Sequencer v1 with real production flows
+- [ ] UX polish on scene editor, clip editing
+- [ ] Fix any bugs discovered by founder dogfooding
+- [ ] Confirm merge/export flow works end-to-end at scale (5+ scenes, 10+ clips)
+
+#### 4.3 — Avatars (THE BIG ONE)
+- [ ] Schema: `avatars` table (user_id, name, photo_url, voice_id, description, attributes JSON)
+- [ ] Avatars library page (sidebar navigation)
+- [ ] Create new avatar flow (upload photo, set name, write character description)
+- [ ] Avatar picker integrated into clip generation (Rift Studio + clip creation modal)
+- [ ] Character consistency hooks in prompt synthesis (rift-assistant route)
+- [ ] Display avatar thumbnails across the app where characters appear
+
+#### 4.4 — Voices (ElevenLabs integration)
+- [ ] Schema: `voices` table (user_id, name, voice_id, source: 'preset' | 'cloned')
+- [ ] ElevenLabs API integration (server route, key management)
+- [ ] Voice library page (sidebar navigation)
+- [ ] Voice browser with previews
+- [ ] Voice cloning UI (upload sample → train → use)
+- [ ] Per-avatar voice assignment
+- [ ] Voice selection in clip generation (when dialogue is present)
+
+#### 4.5 — Brand Kit
+- [ ] Schema: `brand_kits` table (user_id, logo_url, colors, fonts, tagline)
+- [ ] Brand Kit page (sidebar navigation)
+- [ ] Upload logo + asset management
+- [ ] Color palette picker
+- [ ] (Brand Kit will get heavy use in Phase 6 Production Studio; v1 is just storage)
+
+#### 4.6 — Analytics
+- [ ] Schema: events table or aggregation views (videos generated, credits used over time, time spent, etc.)
+- [ ] Analytics page (sidebar navigation)
+- [ ] Charts: generations over time, credits used, tier history
+- [ ] Tier expiration countdown (when Studio subscription renews)
+
+#### 4.7 — Product Animator (PhotoRoom integration)
+- [ ] PhotoRoom API integration (`/v1/animate` endpoint, May 2026)
+- [ ] Product Animator tool flow (upload product image, pick template, generate)
+- [ ] Wire to the tool card on dashboard (replaces former Digital Twin slot)
+- [ ] Cost model: PhotoRoom Plus plan ($0.10/image, $100/mo entry) — bake into credit cost (1-2 credits per product animation)
+- [ ] Result saved to library alongside regular videos
+
+#### 4.8 — Other tool cards
+- [ ] **Generate from Prompt** — text-to-video (Grok Imagine without image input). Simple wrapper.
+- [ ] **Translate Video** — research best provider (HeyGen API at $0.05/sec, or other). Build or hide.
+  - **Decision pending:** if this turns out to require enterprise-only API or is too expensive, HIDE the card for launch
+- [ ] Help center (basic FAQ, contact form, link to docs)
+- [ ] Notifications bell (real notification feed from Supabase events)
+
+#### 4.9 — Dashboard polish (last)
+- [ ] Cinematic video backgrounds for Rift Studio hero card
+  - Decision pending: dogfood via Grok Imagine, or use Pexels stock, or use Runway/Sora/Veo for AI stock
+- [ ] Final animation polish across the app
+- [ ] Delete `app/test-merge/page.tsx` (dev artifact)
+- [ ] Clean up any `'team'` → `'studio'` references in other files (lib/credits.ts already done, app/projects/[id]/page.tsx tier display, ProjectCard, etc.)
+- [ ] Cleanup middleware.ts Clerk type errors (pre-existing, non-blocking)
+
+#### 4.10 — Final launch checks
+- [ ] Real card payment test with founder's Flutterwave card (when it arrives)
+- [ ] Full end-to-end smoke test: signup → free credits → generate → pay → upgrade → renew → cancel → re-pay
+- [ ] Mobile QA on iPhone 15 Pro Max (founder's device)
+- [ ] Custom domain (riftvid.ai or similar) — Vercel migration + update NEXT_PUBLIC_APP_URL + update Flutterwave webhook URL
+- [ ] Public launch 🚀
+
+---
+
+## 🎬 PHASE 5 — STORY-TO-SCENES AI DIRECTOR
+
+**Goal:** User pastes a story → Rift Studio breaks it into scenes → clips → prompts → character list. The AI is the director.
+
+**Marketing tagline:** "Type your story. Get your movie."
+
+**This is the moat we've been climbing toward.** Current Sequencer v1 manual builder is the SCAFFOLDING. AI Director is the actual product.
+
+**Tier gating:** Pro tier and above. The Story-to-Scenes feature is THE reason to upgrade from Creator to Pro.
+
+### Feature breakdown
+- [ ] **Story input** — paste narrative text (anywhere from a paragraph to a full short script)
+- [ ] **Scene decomposition** — GPT-4o or Claude breaks the story into scenes, each with:
+  - Setting + atmosphere
+  - Characters present
+  - Action/dialogue beats
+  - Suggested clip count (1-3 clips per scene typically)
+- [ ] **Character extraction** — identify ALL characters in the story; for each:
+  - Suggest description
+  - Offer: "pick from your Avatars library" / "create new avatar" / "let AI generate one for you"
+  - Establish character consistency for the production
+- [ ] **Clip prompt generation** — for each clip, AI writes the visual prompt with anti-glitch + audio safeguards baked in
+- [ ] **Storyboard review UI** — user sees the full plan before any generation happens; can edit, reorder, remove, add clips
+- [ ] **Batch generation** — once approved, all clips queue up and generate in sequence with last-frame chaining preserved
+- [ ] **Fallback mode** — manual builder still available; AI Director is a smart starter, not a replacement
+
+### Why Phase 5, not Phase 4
+- Manual builder is shipped. AI Director is not. Ship > plan.
+- AI Director needs real user data to tune (Rift Feedback Logger will collect this)
+- Story-to-scenes is 4-6 focused sessions of work. Doing it pre-launch delays launch by weeks.
+- Launching with manual builder gets users; AI Director keeps them upgrading.
+
+---
+
+## 🎨 PHASE 6 — PRODUCTION STUDIO
+
+**Goal:** A second conversational creative product for ad campaigns, explainer videos, and faceless YouTube content.
+
+**Codename:** Production Studio (final name TBD)
+
+**Output:** Polished ad/explainer videos that combine AI-generated humans, AI-generated product shots (via PhotoRoom), animated text/motion graphics, brand assets, and music — to compete with what big brands run on YouTube.
+
+### Interface (LOCKED — conversational, NOT editor)
+
+- Big video player (shows preview when ready, elegant empty state when idle)
+- Below: Rift chat box (extends the same Rift Assistant pattern from clip generation)
+- User describes the video they want; Rift asks questions:
+  - Video size/aspect ratio
+  - Inspiration references (user uploads inspo videos)
+  - Brand assets needed
+  - Characters needed (AI-generated OR from Avatars library)
+  - Tone, pacing, music
+- **Gemini Vision API integration** — Rift analyzes inspo videos to understand style, pacing, color grading
+- Rift requests upload permissions for missing assets, generates the rest
+- Production builds in the background; final video appears in the player
+- Export button
+
+### Engineering decisions (LOCKED)
+
+- **Same engine, separate door**: Production Studio uses the same `projects` / `scenes` / `clips` infrastructure as Rift Studio. A `projects.kind = 'movie' | 'campaign'` field distinguishes them.
+- **Routes**: `/studio` for Rift Studio, `/production` for Production Studio
+- **Both surface on the dashboard** as distinct hero cards
+- **Higher tier requirement** likely — TBD when scope solidifies
+
+### Major engineering chunks (each is its own sub-phase)
+
+- [ ] **6.1** — Build Production Studio shell (chat UI, video player, basic flow)
+- [ ] **6.2** — Gemini Vision integration for inspo analysis
+- [ ] **6.3** — Multi-clip orchestrator (Rift plans, generates, stitches)
+- [ ] **6.4** — Text/motion-graphics overlay system (FFmpeg server-side compositing — significant work)
+- [ ] **6.5** — Template gallery (pre-made campaign types: product launch, explainer, faceless YouTube intro, etc.)
+- [ ] **6.6** — Music/sound effect library integration
+
+### Why Phase 6, not earlier
+- Production Studio is BIG (animated text overlay alone is 2-3 weeks of work)
+- We need real user signal from Phase 5 first to know what production workflows users actually want
+- Building this pre-launch delays Riftvid by months
+- Story-to-Scenes (Phase 5) teaches us how to do "AI builds the production" at smaller scale before we do it at full ad-campaign scale
+
+### Reveal strategy
+
+**Production Studio Hero card is BUILT during Phase 4 launch prep, but HIDDEN behind a feature flag.**
+
+- Tile exists in code, gated by `process.env.NEXT_PUBLIC_SHOW_PRODUCTION_STUDIO === 'true'`
+- Default `false` for launch
+- When ready to reveal (post-Phase 5, somewhere in Phase 6 build), flip the flag
+- Reveal includes a multi-element animation cycling through use cases: faceless content, professional ads, explainers, product launches
+
+---
+
+## 🌟 POST-LAUNCH FUTURE
+
+### AI Glitches Library
+**Trigger to build:** 50+ paying users
+
+"Report a glitch" button on completed videos saves to Supabase `glitch_reports` table (fields: `glitch_types`, `refined_prompt`, `scene_description`, `failing_frame_url`). Data feeds continuous improvement of `ANTI_GLITCH_SAFEGUARDS` constant in `rift-assistant/route.ts`. This is a proprietary dataset moat.
+
+### FYP / Discovery Feed
+**Trigger to build:** 5,000+ paying users
+
+Public-facing feed of Riftvid creations users opt to share. Discovery, virality, network effect.
+
+### Long-form Episodes
+**Possible Studio Pro tier ($299/mo)** — TBD. Unlimited credits + multi-episode production tools. Defer until clear demand from paying Studio users.
+
+### Mobile native apps
+iOS + Android. Current PWA flow works on mobile but native unlocks push notifications, better camera/media integration. Deferred until web product proves out.
+
+---
+
+## 📋 DECISIONS LOG (for context)
+
+These are decisions made across sessions that shape the roadmap:
+
+- **Korapay → Flutterwave** (May 2026) — Korapay KYC stalled; Flutterwave shipped
+- **'team' → 'studio'** (June 2026) — naming consistency with ROADMAP
+- **Credits roll over forever** (May 2026) — trust signal, prevents the "use it or lose it" anxiety
+- **Both subscription + one-time tiers** (May 2026) — Nigerian market includes users without recurring payment habits
+- **Production Studio = conversational, NOT editor** (June 2026) — founder's key insight; avoid out-Adobe-ing Adobe
+- **Same engine, two doors** (June 2026) — Rift Studio (movies) + Production Studio (ads) share infrastructure, separate UIs
+- **Story-to-Scenes = Phase 5, NOT v1 launch** (June 2026) — discipline call; ship what we have, build AI Director after real user signal
+- **Digital Twin retired** (June 2026) — too expensive (HeyGen Enterprise-only), too slow (Synthesia 10 days), wrong fit for African creator market. Permanent — not "coming later"
+- **PhotoRoom Product Animator added** (June 2026) — `/v1/animate` API live April 2026; fits SMB seller niche; replaces Digital Twin slot
+- **Production Studio Hero built but hidden** (June 2026) — feature flag gates it; reveal post-Phase 5
+
+---
+
+## 🚫 EXPLICITLY OUT OF SCOPE (until trigger)
+
+These are PARKED ideas. They will not be built until their trigger fires. If founder proposes building any of these earlier, Claude must invoke the Discipline Contract.
+
+| Idea | Trigger |
+|------|---------|
+| AI Glitches Library | 50+ paying users |
+| FYP / Discovery Feed | 5,000+ paying users |
+| Studio Pro $299 tier | Clear demand from Studio users |
+| Native mobile apps | Web product proves out |
+| Digital Twin (revival) | Genuine user request after launch |
+| Real-time collaboration | Never (not a Riftvid problem) |
+
+---
+
+## 📊 SESSION CADENCE
+
+Riftvid is built in numbered sessions. Each session has:
+1. A clearly scoped deliverable
+2. A locked plan BEFORE building begins
+3. A complete file replacement (not diffs) when shipped
+4. A roadmap status check at the end
+
+**Current session: Session 11C-3 continuation** — Phase 2 Flutterwave (DONE), Sidebar wiring (DONE), strategic planning (DONE), ROADMAP update (← right now), then 4.1 punch-list items, then back-button bug, then ship.
+
+---
+
+> 🎯 **REMINDER TO CLAUDE:** Before any code change in a session, re-read this roadmap. If the founder's request doesn't match what's listed here, invoke the Discipline Contract. The roadmap is the contract.
+
+> 🎯 **REMINDER TO FOUNDER:** This roadmap is your protection. It exists so we ship a real product, not 47 half-finished features. Trust the order. Insist when you must. But insist KNOWINGLY.

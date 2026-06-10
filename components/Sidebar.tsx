@@ -59,7 +59,7 @@ export default function Sidebar({ open, onClose, profile, onUpgradeClick }: Side
     { name: 'Home', icon: Home, href: '/', badge: null },
     { name: 'Rift Studio', icon: Film, href: '/studio', badge: 'NEW' },
     { name: 'Projects', icon: FolderClosed, href: '/projects', badge: null },
-    { name: 'Avatars', icon: UserSquare2, href: '#', badge: null },
+    { name: 'Avatars', icon: UserSquare2, href: '/avatars', badge: null },
     { name: 'Voices', icon: Mic, href: '#', badge: null },
     { name: 'Brand Kit', icon: Palette, href: '#', badge: null },
     { name: 'Analytics', icon: BarChart3, href: '#', badge: null },
@@ -76,6 +76,7 @@ export default function Sidebar({ open, onClose, profile, onUpgradeClick }: Side
     if (href === '/') return pathname === '/';
     if (href === '/studio') return pathname === '/studio' || pathname.startsWith('/studio/');
     if (href === '/projects') return pathname === '/projects' || pathname.startsWith('/projects/');
+    if (href === '/avatars') return pathname === '/avatars' || pathname.startsWith('/avatars/');
     return false;
   };
 

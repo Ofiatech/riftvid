@@ -5,13 +5,16 @@ import Link from 'next/link';
 import { useUser } from '@clerk/nextjs';
 import {
   Search, Bell, Plus, Sparkles, Globe, UserPlus, Play, Upload, Zap, BarChart2,
-  Link2, Wand2, X, Video, Library, ChevronRight, Menu, ArrowLeft, Loader2, Check,
+  Link2, Wand2, X, Video, ChevronRight, Menu, ArrowLeft, Loader2, Check,
   RefreshCw, Eye, Download, Film, Clock, MessageCircle, Trash2, MoreVertical,
-  CreditCard, AlertCircle,
+  CreditCard, AlertCircle, Palette,
 } from 'lucide-react';
 import RiftFeedbackButton from '@/components/RiftFeedbackButton';
 import Sidebar, { UserProfileData } from '@/components/Sidebar';
 import TierPickerModal from '@/components/TierPickerModal';
+
+// Phase 6 feature flag — flip to true on reveal day, push, done.
+const SHOW_PRODUCTION_STUDIO = false;
 
 type VideoStatus = 'queued' | 'processing' | 'completed' | 'failed';
 
@@ -93,70 +96,26 @@ function Topbar({ onNewGeneration, onToggleSidebar }: { onNewGeneration: () => v
   );
 }
 
-function HeroCard({ onNewGeneration, totalJobs, profile }: { onNewGeneration: () => void; totalJobs: number; profile: UserProfileData | null }) {
-  const { user } = useUser();
-  const displayName = user?.firstName || user?.username || 'Creator';
-  const credits = profile?.credits_balance ?? 0;
-  return (
-    <div className="relative rounded-3xl border border-[#1f2937] bg-gradient-to-br from-purple-500/[0.08] via-[#0a0a0b] to-blue-500/[0.05] p-6 sm:p-8 md:p-10 overflow-hidden">
-      <div className="absolute -top-32 -right-32 w-80 h-80 rounded-full bg-purple-500/20 blur-[100px] opacity-60" />
-      <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-blue-500/15 blur-[100px] opacity-50" />
-      <div className="relative z-10 max-w-2xl">
-        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/15 border border-purple-500/20 text-[10px] font-semibold uppercase tracking-wider text-purple-300 mb-5">
-          <Zap className="w-3 h-3" strokeWidth={2} />
-          Quick Generation
-        </div>
-        <h1 className="text-[28px] sm:text-[36px] md:text-[44px] font-semibold tracking-tight leading-[1.1] text-white mb-3">
-          Create Cinematic Magic,{' '}
-          <span className="bg-gradient-to-r from-purple-300 to-blue-300 bg-clip-text text-transparent">{displayName}.</span>
-        </h1>
-        <p className="text-[14px] sm:text-[15px] text-zinc-400 leading-relaxed mb-6 sm:mb-8 max-w-lg">
-          Generate AI videos in seconds from prompts, images, or ideas.
-        </p>
-        <div className="flex items-center gap-6 sm:gap-8 mb-6 sm:mb-8">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
-              <BarChart2 className="w-4 h-4 text-purple-300" strokeWidth={2} />
-            </div>
-            <div>
-              <div className="text-[18px] font-semibold text-white leading-none">{totalJobs}</div>
-              <div className="text-[11px] text-zinc-500 mt-0.5">Total jobs</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center">
-              <Zap className="w-4 h-4 text-amber-300 fill-amber-300/50" strokeWidth={2} />
-            </div>
-            <div>
-              <div className="text-[18px] font-semibold text-white leading-none">{credits}</div>
-              <div className="text-[11px] text-zinc-500 mt-0.5">Credits left</div>
-            </div>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button onClick={onNewGeneration} className="group relative flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] sm:text-[14px] font-semibold shadow-lg shadow-purple-500/30 transition-all hover:shadow-purple-500/50 hover:-translate-y-0.5">
-            <Upload className="w-4 h-4" strokeWidth={2.25} />
-            New Generation
-          </button>
-          <Link href="/library" className="flex items-center gap-2 px-4 sm:px-5 py-2.5 sm:py-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.06] border border-[#1f2937] hover:border-[#2d3748] text-white text-[13px] sm:text-[14px] font-semibold transition-all">
-            <Library className="w-4 h-4" strokeWidth={2} />
-            My Library
-          </Link>
-        </div>
-      </div>
-    </div>
-  );
-}
+interface ToolCardProps { title: string; description: string; icon: React.ReactNode; gradient: string; tag: string; tagColor: string; badge?: string; cta: string; onClick?: () => void; disabled?: boolean; }
 
-interface ToolCardProps { title: string; description: string; icon: React.ReactNode; gradient: string; tag: string; tagColor: string; badge?: string; cta: string; }
-
-function ToolCard({ title, description, icon, gradient, tag, tagColor, badge, cta }: ToolCardProps) {
+function ToolCard({ title, description, icon, gradient, tag, tagColor, badge, cta, onClick, disabled }: ToolCardProps) {
+  const isInteractive = !!onClick && !disabled;
   return (
-    <button className="group relative text-left rounded-2xl border border-[#1f2937] bg-[#0a0a0b] p-4 sm:p-5 overflow-hidden transition-all duration-300 hover:border-[#2d3748] lift grain">
-      <div className={`absolute -top-16 -right-16 w-40 h-40 rounded-full ${gradient} blur-3xl opacity-40 group-hover:opacity-70 transition-opacity duration-500`} />
+    <button
+      onClick={onClick}
+      disabled={disabled || !onClick}
+      className={`group relative text-left rounded-2xl border border-[#1f2937] bg-[#0a0a0b] p-4 sm:p-5 overflow-hidden transition-all duration-300 ${
+        isInteractive
+          ? 'hover:border-[#2d3748] lift grain cursor-pointer'
+          : disabled
+          ? 'opacity-70 cursor-not-allowed'
+          : 'cursor-default'
+      }`}
+    >
+      <div className={`absolute -top-16 -right-16 w-40 h-40 rounded-full ${gradient} blur-3xl opacity-40 ${isInteractive ? 'group-hover:opacity-70' : ''} transition-opacity duration-500`} />
       <div className="relative z-10">
         <div className="flex items-start justify-between mb-4">
-          <div className="w-10 h-10 rounded-xl glass flex items-center justify-center group-hover:scale-110 transition-transform duration-300">{icon}</div>
+          <div className={`w-10 h-10 rounded-xl glass flex items-center justify-center ${isInteractive ? 'group-hover:scale-110' : ''} transition-transform duration-300`}>{icon}</div>
           <div className="flex items-center gap-1.5">
             {badge && <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/20">{badge}</span>}
             <span className={`text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${tagColor}`}>{tag}</span>
@@ -164,9 +123,9 @@ function ToolCard({ title, description, icon, gradient, tag, tagColor, badge, ct
         </div>
         <h3 className="text-[13px] sm:text-[14px] font-semibold text-white mb-1 tracking-tight">{title}</h3>
         <p className="text-[11px] sm:text-[12px] text-zinc-400 leading-relaxed mb-4">{description}</p>
-        <div className="flex items-center gap-1 text-[11px] font-medium text-zinc-500 group-hover:text-white transition-colors">
+        <div className={`flex items-center gap-1 text-[11px] font-medium text-zinc-500 ${isInteractive ? 'group-hover:text-white' : ''} transition-colors`}>
           <span>{cta}</span>
-          <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" strokeWidth={2.25} />
+          {isInteractive && <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" strokeWidth={2.25} />}
         </div>
       </div>
     </button>
@@ -1032,6 +991,8 @@ function NewGenerationModal({ open, onClose, onGenerationComplete, profile, onPr
 }
 
 function RiftStudioHero() {
+  const { user } = useUser();
+  const displayName = user?.firstName || user?.username || 'Creator';
   return (
     <Link href="/studio" className="block group">
       <div className="relative rounded-3xl border border-purple-500/25 bg-gradient-to-br from-purple-500/[0.12] via-[#0a0a0b] to-blue-500/[0.08] p-6 sm:p-7 overflow-hidden transition-all duration-300 hover:border-purple-500/40 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-purple-500/20">
@@ -1050,7 +1011,8 @@ function RiftStudioHero() {
           </div>
 
           <h2 className="text-[22px] sm:text-[26px] md:text-[30px] font-semibold tracking-tight leading-tight text-white mb-2">
-            Direct Your AI Movie Production
+            Direct Your AI Movie Production,{' '}
+            <span className="bg-gradient-to-r from-purple-300 to-blue-300 bg-clip-text text-transparent">{displayName}</span>
           </h2>
           <p className="text-[13px] sm:text-[14px] text-zinc-400 leading-relaxed mb-5 max-w-xl">
             Build multi-scene cinematic stories with continuity, character memory,
@@ -1084,6 +1046,62 @@ function RiftStudioHero() {
         </div>
       </div>
     </Link>
+  );
+}
+
+// Hero 2 — Production Studio. Gated by SHOW_PRODUCTION_STUDIO flag.
+// Built but hidden until Phase 6 reveal. When revealed, this card gets
+// the multi-element rotating animation (faceless content, ads, explainers, etc.)
+function ProductionStudioHero() {
+  return (
+    <div className="relative rounded-3xl border border-blue-500/25 bg-gradient-to-br from-blue-500/[0.12] via-[#0a0a0b] to-emerald-500/[0.08] p-6 sm:p-7 overflow-hidden transition-all duration-300 cursor-default">
+      <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full bg-blue-500/15 blur-[80px]" />
+      <div className="absolute -bottom-16 -left-16 w-56 h-56 rounded-full bg-emerald-500/10 blur-[80px]" />
+
+      <div className="relative z-10">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/20 border border-blue-500/30 text-[10px] font-semibold uppercase tracking-wider text-blue-200">
+            <Sparkles className="w-3 h-3" strokeWidth={2} />
+            Production Studio
+          </div>
+          <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-gradient-to-r from-amber-500/30 to-orange-500/30 text-amber-100 border border-amber-500/40">
+            Coming Soon
+          </span>
+        </div>
+
+        <h2 className="text-[22px] sm:text-[26px] md:text-[30px] font-semibold tracking-tight leading-tight text-white mb-2">
+          Your Conversational Ad Studio
+        </h2>
+        <p className="text-[13px] sm:text-[14px] text-zinc-400 leading-relaxed mb-5 max-w-xl">
+          Just talk to Rift. Describe the ad, explainer, or faceless video you want,
+          and watch it come together — characters, product shots, animated text, all in one place.
+        </p>
+
+        <div className="flex flex-wrap gap-2 mb-5">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+            <MessageCircle className="w-3 h-3 text-blue-300" strokeWidth={2} />
+            Chat-Driven
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+            <Video className="w-3 h-3 text-blue-300" strokeWidth={2} />
+            Ads & Explainers
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+            <Eye className="w-3 h-3 text-blue-300" strokeWidth={2} />
+            Inspo-Aware
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[11px] text-zinc-300">
+            <Palette className="w-3 h-3 text-blue-300" strokeWidth={2} />
+            Brand-Aware
+          </div>
+        </div>
+
+        <div className="inline-flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-zinc-400 text-[13px] sm:text-[14px] font-semibold transition-all">
+          <Sparkles className="w-4 h-4" strokeWidth={2.25} />
+          Launching Soon
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1174,15 +1192,53 @@ export default function Dashboard() {
       <main className="lg:ml-64 relative z-[1]">
         <Topbar onNewGeneration={() => setModalOpen(true)} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="px-4 sm:px-10 py-6 sm:py-8 max-w-[1400px] fade-up">
-          <section className="mb-6 sm:mb-8"><HeroCard onNewGeneration={() => setModalOpen(true)} totalJobs={videos.length} profile={profile} /></section>
-          <section className="mb-8 sm:mb-10"><RiftStudioHero /></section>
+          <section className="mb-6 sm:mb-8"><RiftStudioHero /></section>
+          {SHOW_PRODUCTION_STUDIO && (
+            <section className="mb-6 sm:mb-8"><ProductionStudioHero /></section>
+          )}
           <section className="mb-10 sm:mb-12">
             <h2 className="text-[13px] font-medium text-zinc-500 uppercase tracking-wider mb-4">Studio Tools</h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-              <ToolCard title="Image to Motion" description="Transform any still into cinematic video" icon={<Video className="w-5 h-5 text-purple-300" strokeWidth={1.75} />} gradient="bg-purple-500" tag="Core" tagColor="bg-purple-500/15 text-purple-300 border border-purple-500/20" cta="Generate" />
-              <ToolCard title="Generate from Prompt" description="Describe your video in plain English. AI handles it all" icon={<Sparkles className="w-5 h-5 text-blue-300" strokeWidth={1.75} />} gradient="bg-blue-500" tag="AI" tagColor="bg-blue-500/15 text-blue-300 border border-blue-500/20" badge="New" cta="Create" />
-              <ToolCard title="Translate Video" description="Dub any video into 40+ languages with lip-sync" icon={<Globe className="w-5 h-5 text-emerald-300" strokeWidth={1.75} />} gradient="bg-emerald-500" tag="Presets" tagColor="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20" cta="Translate" />
-              <ToolCard title="Digital Twin" description="Create a photoreal AI avatar from 2 min of footage" icon={<UserPlus className="w-5 h-5 text-rose-300" strokeWidth={1.75} />} gradient="bg-rose-500" tag="Vault" tagColor="bg-amber-500/15 text-amber-300 border border-amber-500/20" cta="Create twin" />
+              <ToolCard
+                title="Image to Motion"
+                description="Transform any still into cinematic video"
+                icon={<Video className="w-5 h-5 text-purple-300" strokeWidth={1.75} />}
+                gradient="bg-purple-500"
+                tag="Core"
+                tagColor="bg-purple-500/15 text-purple-300 border border-purple-500/20"
+                cta="Generate"
+                onClick={() => setModalOpen(true)}
+              />
+              <ToolCard
+                title="Generate from Prompt"
+                description="Describe your video in plain English. AI handles it all"
+                icon={<Sparkles className="w-5 h-5 text-blue-300" strokeWidth={1.75} />}
+                gradient="bg-blue-500"
+                tag="AI"
+                tagColor="bg-blue-500/15 text-blue-300 border border-blue-500/20"
+                badge="Coming Soon"
+                cta="Soon"
+              />
+              <ToolCard
+                title="Translate Video"
+                description="Dub any video into 40+ languages with lip-sync"
+                icon={<Globe className="w-5 h-5 text-emerald-300" strokeWidth={1.75} />}
+                gradient="bg-emerald-500"
+                tag="Presets"
+                tagColor="bg-emerald-500/15 text-emerald-300 border border-emerald-500/20"
+                badge="Coming Soon"
+                cta="Soon"
+              />
+              <ToolCard
+                title="Product Animator"
+                description="Turn product photos into ad-ready video clips"
+                icon={<Sparkles className="w-5 h-5 text-rose-300" strokeWidth={1.75} />}
+                gradient="bg-rose-500"
+                tag="Studio"
+                tagColor="bg-amber-500/15 text-amber-300 border border-amber-500/20"
+                badge="Coming Soon"
+                cta="Soon"
+              />
             </div>
           </section>
           <section>

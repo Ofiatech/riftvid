@@ -3,8 +3,8 @@ import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Riftvid — AI Video Studio',
-  description: 'Generate, translate, and remix video with AI.',
+  title: 'Riftvid',
+  description: 'Direct your AI movie. From script to screen.',
 };
 
 export default function RootLayout({

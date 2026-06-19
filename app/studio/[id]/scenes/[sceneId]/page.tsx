@@ -1328,7 +1328,7 @@ export default function SceneStudioPage() {
   // The action sheet has 4 options; we need to pre-select the matching tab
   // in ClipGenerationModal. Without this, every action just opens "Upload"
   // which defeats the purpose of "Continue from previous".
-  const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library'>('upload');
+  const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library' | 'url'>('upload');
 
   // === USER-INITIATED PLAYER SEEK ===
   // When user taps a thumbnail and merged playback is active, we set this
@@ -1459,9 +1459,12 @@ export default function SceneStudioPage() {
   ) => {
     if (action === 'chain') {
       setPendingSourceType('last_frame');
+    } else if (action === 'url') {
+      // CHUNK 1 (Bug 2): URL action now opens its dedicated URL tab in the modal.
+      setPendingSourceType('url');
     } else {
-      // 'upload', 'prompt', and 'url' all open the upload tab.
-      // (Prompt/URL aren't fully implemented yet — they get upload UX for now.)
+      // 'upload' and 'prompt' still fall back to upload tab.
+      // Prompt will get its own routing in Chunk 3 (4.3.5b).
       setPendingSourceType('upload');
     }
     setAddActionSheetOpen(false);

@@ -4,12 +4,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, Sparkles, Upload, Link2, Library, Loader2, Check, Wand2,
   RefreshCw, Clock, Film, Zap, Play, Eye, MessageCircle,
-  ArrowLeft,
+  ArrowLeft, Globe,
 } from 'lucide-react';
 
 type ChatMode = 'idle' | 'asking' | 'refining' | 'done' | 'error';
 type GenerationMode = 'idle' | 'submitting' | 'queued' | 'processing' | 'completed' | 'failed';
-type SourceType = 'upload' | 'last_frame' | 'library';
+// CHUNK 1 (Bug 2): added 'url' as a source type. Was: 'upload' | 'last_frame' | 'library'.
+type SourceType = 'upload' | 'last_frame' | 'library' | 'url';
 
 interface RiftQuestion {
   question: string;
@@ -46,7 +47,7 @@ interface ClipGenerationModalProps {
   profile: UserProfile | null;
   onClipCreated: () => void;
   onProfileUpdate: () => void;
-  // NEW: When parent opens the modal via the action sheet, it tells us
+  // When parent opens the modal via the action sheet, it tells us
   // which tab to pre-select. Default = 'upload' for backwards compat.
   initialSourceType?: SourceType;
 }
@@ -67,6 +68,19 @@ function fileToBase64(file: File): Promise<string> {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+// CHUNK 1 (Bug 2): URL validation helper.
+// Returns true only if input is a syntactically valid http(s) URL.
+// Image extension check is loose (some image URLs don't end in .jpg/.png),
+// so we let the user "Load" and verify via actual image fetch in the preview.
+function isValidImageUrl(input: string): boolean {
+  try {
+    const u = new URL(input);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 export default function ClipGenerationModal({
@@ -91,6 +105,16 @@ export default function ClipGenerationModal({
   const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
+
+  // CHUNK 1 (Bug 2): URL source state.
+  // - urlInput: what's typed in the input field
+  // - urlPreviewUrl: the URL successfully loaded as preview (null = not loaded yet)
+  // - urlError: validation or load-failure message
+  // - urlLoading: spinner state while we verify the URL by attempting to load it as an image
+  const [urlInput, setUrlInput] = useState('');
+  const [urlPreviewUrl, setUrlPreviewUrl] = useState<string | null>(null);
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const [urlLoading, setUrlLoading] = useState(false);
 
   // Prompt + duration
   const [aiOptimization, setAiOptimization] = useState(true);
@@ -119,12 +143,14 @@ export default function ClipGenerationModal({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const customInputRef = useRef<HTMLInputElement>(null);
+  const urlInputRef = useRef<HTMLInputElement>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const credits = profile?.credits_balance ?? 0;
   const requiredCredits = duration === 5 ? 1 : 2;
   const canAffordGeneration = credits >= requiredCredits;
 
+  // CHUNK 1 (Bug 2): getCurrentImageUrl now also handles 'url' source type.
   const getCurrentImageUrl = useCallback((): string | null => {
     if (sourceType === 'upload') return previewUrl;
     if (sourceType === 'last_frame') {
@@ -132,14 +158,13 @@ export default function ClipGenerationModal({
       return opt?.lastFrameUrl || null;
     }
     if (sourceType === 'library') return selectedLibraryItem?.source_image_url || null;
+    if (sourceType === 'url') return urlPreviewUrl;
     return null;
-  }, [sourceType, previewUrl, selectedLastFrameClipId, lastFrameOptions, selectedLibraryItem]);
+  }, [sourceType, previewUrl, selectedLastFrameClipId, lastFrameOptions, selectedLibraryItem, urlPreviewUrl]);
 
   const currentImageUrl = getCurrentImageUrl();
 
   // Sync sourceType to initialSourceType whenever the modal opens.
-  // Without this, the modal keeps the LAST tab the user was on,
-  // ignoring the user's most recent action sheet pick.
   useEffect(() => {
     if (open) {
       setSourceType(initialSourceType);
@@ -176,6 +201,15 @@ export default function ClipGenerationModal({
     }
   }, [sourceType, lastFrameOptions, selectedLastFrameClipId]);
 
+  // CHUNK 1 (Bug 2): auto-focus URL input when switching to URL tab
+  useEffect(() => {
+    if (sourceType === 'url' && !urlPreviewUrl) {
+      // Slight delay so the input is mounted before focus call
+      const t = setTimeout(() => urlInputRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [sourceType, urlPreviewUrl]);
+
   useEffect(() => {
     if (showCustomInput) customInputRef.current?.focus();
   }, [showCustomInput]);
@@ -201,6 +235,11 @@ export default function ClipGenerationModal({
     setSelectedLastFrameClipId(null);
     setSelectedLibraryItem(null);
     setFileError(null);
+    // CHUNK 1 (Bug 2): reset URL state on close
+    setUrlInput('');
+    setUrlPreviewUrl(null);
+    setUrlError(null);
+    setUrlLoading(false);
     setPrompt('');
     setDuration(5);
     setChatMode('idle');
@@ -247,6 +286,43 @@ export default function ClipGenerationModal({
     setSelectedFile(null);
     setPreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // CHUNK 1 (Bug 2): URL handlers.
+  // handleUrlLoad: when user clicks "Load" (or presses Enter), validate the URL
+  // and attempt to load it as an image. We do this client-side by creating an
+  // Image() object — if it loads successfully, we accept the URL. If it errors
+  // (CORS, 404, non-image content), we show a clear error message.
+  const handleUrlLoad = () => {
+    setUrlError(null);
+    const trimmed = urlInput.trim();
+    if (!trimmed) {
+      setUrlError('Please paste an image URL');
+      return;
+    }
+    if (!isValidImageUrl(trimmed)) {
+      setUrlError('URL must start with https:// or http://');
+      return;
+    }
+    setUrlLoading(true);
+    // Test-load the image — this catches CORS issues, 404s, and non-image URLs.
+    const testImg = new window.Image();
+    testImg.onload = () => {
+      setUrlLoading(false);
+      setUrlPreviewUrl(trimmed);
+    };
+    testImg.onerror = () => {
+      setUrlLoading(false);
+      setUrlError("Couldn't load that image. Check the URL or try a different one.");
+    };
+    testImg.src = trimmed;
+  };
+
+  const handleUrlRemove = () => {
+    setUrlInput('');
+    setUrlPreviewUrl(null);
+    setUrlError(null);
+    setUrlLoading(false);
   };
 
   const callRift = async (
@@ -449,6 +525,11 @@ export default function ClipGenerationModal({
         payload.source_clip_id = selectedLastFrameClipId;
       } else if (sourceType === 'library') {
         payload.source_image_url = selectedLibraryItem?.source_image_url;
+      } else if (sourceType === 'url') {
+        // CHUNK 1 (Bug 2): URL flow sends source_image_url directly.
+        // Backend already accepts this field for the upload-with-URL path —
+        // we're reusing the same downstream contract.
+        payload.source_image_url = urlPreviewUrl;
       }
 
       const createRes = await fetch(
@@ -669,10 +750,11 @@ export default function ClipGenerationModal({
               {(chatMode === 'idle' || chatMode === 'done') && (
                 <div className="mb-5">
                   <label className="block text-[12px] font-medium text-zinc-300 mb-2">Source Image</label>
-                  <div className="grid grid-cols-3 gap-1.5 mb-3">
+                  {/* CHUNK 1 (Bug 2): grid expanded from 3 → 4 columns to fit the URL tab */}
+                  <div className="grid grid-cols-4 gap-1.5 mb-3">
                     <button
                       onClick={() => setSourceType('upload')}
-                      className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium transition-all ${
+                      className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg text-[11px] font-medium transition-all ${
                         sourceType === 'upload'
                           ? 'bg-purple-500/15 text-purple-200 border border-purple-500/30'
                           : 'bg-white/[0.02] text-zinc-400 border border-[#1f2937] hover:bg-white/[0.04]'
@@ -684,23 +766,25 @@ export default function ClipGenerationModal({
                     <button
                       onClick={() => setSourceType('last_frame')}
                       disabled={!hasLastFrameOptions}
-                      className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium transition-all ${
+                      className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg text-[11px] font-medium transition-all ${
                         sourceType === 'last_frame'
                           ? 'bg-purple-500/15 text-purple-200 border border-purple-500/30'
                           : 'bg-white/[0.02] text-zinc-400 border border-[#1f2937] hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed'
                       }`}
                     >
-                      <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
+                      <div className="flex items-center gap-1">
+                        <Link2 className="w-3.5 h-3.5" strokeWidth={2} />
+                        {hasLastFrameOptions && (
+                          <span className="text-[9px] font-bold px-1 py-0 rounded bg-purple-500/30 text-purple-100">
+                            {lastFrameOptions.length}
+                          </span>
+                        )}
+                      </div>
                       Chain
-                      {hasLastFrameOptions && (
-                        <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-purple-500/30 text-purple-100">
-                          {lastFrameOptions.length}
-                        </span>
-                      )}
                     </button>
                     <button
                       onClick={() => setSourceType('library')}
-                      className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium transition-all ${
+                      className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg text-[11px] font-medium transition-all ${
                         sourceType === 'library'
                           ? 'bg-purple-500/15 text-purple-200 border border-purple-500/30'
                           : 'bg-white/[0.02] text-zinc-400 border border-[#1f2937] hover:bg-white/[0.04]'
@@ -708,6 +792,18 @@ export default function ClipGenerationModal({
                     >
                       <Library className="w-3.5 h-3.5" strokeWidth={2} />
                       Library
+                    </button>
+                    {/* CHUNK 1 (Bug 2): NEW URL tab. Opens URL input UI. */}
+                    <button
+                      onClick={() => setSourceType('url')}
+                      className={`flex flex-col items-center justify-center gap-1 px-2 py-2 rounded-lg text-[11px] font-medium transition-all ${
+                        sourceType === 'url'
+                          ? 'bg-purple-500/15 text-purple-200 border border-purple-500/30'
+                          : 'bg-white/[0.02] text-zinc-400 border border-[#1f2937] hover:bg-white/[0.04]'
+                      }`}
+                    >
+                      <Globe className="w-3.5 h-3.5" strokeWidth={2} />
+                      URL
                     </button>
                   </div>
 
@@ -862,6 +958,90 @@ export default function ClipGenerationModal({
                               </button>
                             ))}
                           </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* CHUNK 1 (Bug 2): URL source UI. Two states: input-empty (paste field + Load button) vs preview-loaded (image card + Remove). */}
+                  {sourceType === 'url' && (
+                    <>
+                      {urlPreviewUrl ? (
+                        // PREVIEW STATE: URL successfully loaded, show image card with Remove button
+                        <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/[0.06] to-blue-500/[0.03] p-3">
+                          <div className="flex items-center gap-3">
+                            <div className="relative w-14 h-14 rounded-lg overflow-hidden border border-white/[0.08] shrink-0 bg-[#050505]">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={urlPreviewUrl} alt="URL preview" className="w-full h-full object-cover" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <Check className="w-3 h-3 text-emerald-400" strokeWidth={2.5} />
+                                <span className="text-[11px] font-semibold uppercase tracking-wider text-emerald-300">Loaded</span>
+                              </div>
+                              <div className="text-[12px] font-medium text-white truncate" title={urlPreviewUrl}>
+                                {urlPreviewUrl}
+                              </div>
+                              <div className="text-[10px] text-zinc-500">External image URL</div>
+                            </div>
+                            <button
+                              onClick={handleUrlRemove}
+                              className="p-2 rounded-lg hover:bg-rose-500/10 hover:text-rose-300 text-zinc-500 transition-colors shrink-0"
+                              aria-label="Remove URL"
+                            >
+                              <X className="w-4 h-4" strokeWidth={2} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // INPUT STATE: paste URL, Load button, errors below
+                        <div className="space-y-2">
+                          <div className="rounded-xl border-2 border-dashed border-[#1f2937] hover:border-purple-500/40 bg-white/[0.01] hover:bg-purple-500/[0.02] p-5 transition-all">
+                            <div className="flex flex-col items-center text-center mb-3">
+                              <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-2">
+                                <Globe className="w-4 h-4 text-purple-300" strokeWidth={2} />
+                              </div>
+                              <div className="text-[13px] font-semibold text-white mb-0.5">Paste an image URL</div>
+                              <div className="text-[11px] text-zinc-500">Any public https:// image link from the web</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <input
+                                ref={urlInputRef}
+                                type="url"
+                                value={urlInput}
+                                onChange={(e) => {
+                                  setUrlInput(e.target.value);
+                                  if (urlError) setUrlError(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !urlLoading) {
+                                    e.preventDefault();
+                                    handleUrlLoad();
+                                  }
+                                }}
+                                placeholder="https://example.com/photo.jpg"
+                                disabled={urlLoading}
+                                className="flex-1 px-3 py-2.5 bg-white/[0.04] border border-[#1f2937] rounded-lg text-[13px] text-white placeholder:text-zinc-500 focus:outline-none focus:border-purple-500/40 focus:bg-white/[0.06] transition-all disabled:opacity-50"
+                              />
+                              <button
+                                onClick={handleUrlLoad}
+                                disabled={!urlInput.trim() || urlLoading}
+                                className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[12px] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0"
+                              >
+                                {urlLoading ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2.25} />
+                                ) : (
+                                  <Check className="w-3.5 h-3.5" strokeWidth={2.5} />
+                                )}
+                                Load
+                              </button>
+                            </div>
+                          </div>
+                          {urlError && (
+                            <div className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-[12px] text-rose-300">
+                              {urlError}
+                            </div>
+                          )}
                         </div>
                       )}
                     </>

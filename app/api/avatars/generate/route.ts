@@ -37,6 +37,38 @@ const PROMPT_MIN = 5;
 const PROMPT_MAX = 2000;
 
 // ============================================================================
+// AVATAR FRAMING DIRECTIVES
+// Server-side prompt augmentation. Appended to every user prompt so generated
+// avatars are consistent character-reference shots (full body, neutral pose,
+// plain background) — NOT finished scene compositions.
+//
+// Why: avatar photos get reused as reference images for scene generation
+// downstream (Nano Banana Pro in Rift Studio). A reference photo of "Ada in
+// a coffee shop" would bake the coffee shop INTO every future scene she's
+// in — bad. We want the avatar to be the CHARACTER, plain backdrop, so the
+// downstream scene generator has full freedom.
+//
+// To tune (or move to admin panel later): just edit this constant.
+// ============================================================================
+const AVATAR_FRAMING_DIRECTIVES = [
+  'Render as a full-body character reference shot.',
+  'The subject is standing upright, facing forward, full body visible from head to toe.',
+  'Neutral facial expression, arms relaxed at sides.',
+  'Plain neutral light-gray studio background, no scene or environment.',
+  'Even soft studio lighting, no harsh shadows, no dramatic mood lighting.',
+  'Photorealistic, sharp focus, high detail.',
+].join(' ');
+
+/**
+ * Combine the user's character description with our framing directives.
+ * The framing block comes LAST so diffusion models weight it strongly
+ * (later prompt content typically wins in Flux/SD-family models).
+ */
+function buildAvatarPrompt(userPrompt: string): string {
+  return `${userPrompt.trim()}\n\n${AVATAR_FRAMING_DIRECTIVES}`;
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -242,7 +274,7 @@ export async function POST(req: NextRequest) {
 
       const result = (await fal.subscribe(FAL_MODEL, {
         input: {
-          prompt,
+          prompt: buildAvatarPrompt(prompt),
           image_size: FAL_IMAGE_SIZE,
           // Optional Flux Dev defaults — leaving num_inference_steps at 28 (default)
           // and guidance_scale at default (3.5) for now. Tunable in v2.

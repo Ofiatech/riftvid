@@ -70,11 +70,10 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-// CHUNK 1 (Bug 2): URL validation helper.
-// Returns true only if input is a syntactically valid http(s) URL.
-// Image extension check is loose (some image URLs don't end in .jpg/.png),
-// so we let the user "Load" and verify via actual image fetch in the preview.
-function isValidImageUrl(input: string): boolean {
+// CHUNK 1.5: lightweight client-side URL syntax check before we even hit the
+// proxy. Anything more (gallery page resolution, image verification) is now
+// handled server-side in /api/utils/resolve-image-url.
+function isHttpUrl(input: string): boolean {
   try {
     const u = new URL(input);
     return u.protocol === 'http:' || u.protocol === 'https:';
@@ -288,34 +287,52 @@ export default function ClipGenerationModal({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  // CHUNK 1 (Bug 2): URL handlers.
-  // handleUrlLoad: when user clicks "Load" (or presses Enter), validate the URL
-  // and attempt to load it as an image. We do this client-side by creating an
-  // Image() object — if it loads successfully, we accept the URL. If it errors
-  // (CORS, 404, non-image content), we show a clear error message.
-  const handleUrlLoad = () => {
+  // CHUNK 1.5: URL handlers now go through the server-side proxy at
+  // /api/utils/resolve-image-url. The proxy:
+  //   - HEAD-checks direct image URLs (fast path)
+  //   - Fetches HTML pages and extracts og:image / twitter:image / first img tag
+  //   - Returns a verified direct image URL we can pass straight to the clip endpoint
+  //   - Returns rich error messages with hints when resolution fails
+  const handleUrlLoad = async () => {
     setUrlError(null);
     const trimmed = urlInput.trim();
     if (!trimmed) {
-      setUrlError('Please paste an image URL');
+      setUrlError('Please paste an image or page URL');
       return;
     }
-    if (!isValidImageUrl(trimmed)) {
+    if (!isHttpUrl(trimmed)) {
       setUrlError('URL must start with https:// or http://');
       return;
     }
     setUrlLoading(true);
-    // Test-load the image — this catches CORS issues, 404s, and non-image URLs.
-    const testImg = new window.Image();
-    testImg.onload = () => {
+    try {
+      const res = await fetch('/api/utils/resolve-image-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: trimmed }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const message = data?.message || "Couldn't load that image.";
+        const hint = data?.hint ? ` ${data.hint}` : '';
+        setUrlError(`${message}${hint}`);
+        setUrlLoading(false);
+        return;
+      }
+      // Success — proxy returned a verified direct image URL.
+      const resolved = data?.imageUrl as string | undefined;
+      if (!resolved) {
+        setUrlError("Couldn't extract an image from that link.");
+        setUrlLoading(false);
+        return;
+      }
+      setUrlPreviewUrl(resolved);
       setUrlLoading(false);
-      setUrlPreviewUrl(trimmed);
-    };
-    testImg.onerror = () => {
+    } catch (err) {
+      console.error('URL resolve error:', err);
+      setUrlError("Couldn't reach the resolver. Check your connection and try again.");
       setUrlLoading(false);
-      setUrlError("Couldn't load that image. Check the URL or try a different one.");
-    };
-    testImg.src = trimmed;
+    }
   };
 
   const handleUrlRemove = () => {
@@ -1001,8 +1018,10 @@ export default function ClipGenerationModal({
                               <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-2">
                                 <Globe className="w-4 h-4 text-purple-300" strokeWidth={2} />
                               </div>
-                              <div className="text-[13px] font-semibold text-white mb-0.5">Paste an image URL</div>
-                              <div className="text-[11px] text-zinc-500">Any public https:// image link from the web</div>
+                              <div className="text-[13px] font-semibold text-white mb-0.5">Paste an image or page URL</div>
+                              <div className="text-[11px] text-zinc-500">
+                                Direct image link, or any page (Pexels, Unsplash, etc.) — we&apos;ll find the image.
+                              </div>
                             </div>
                             <div className="flex gap-2">
                               <input

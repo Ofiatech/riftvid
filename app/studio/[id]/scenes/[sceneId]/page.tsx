@@ -20,10 +20,17 @@ interface ClipItem {
   id: string;
   clip_order: number;
   source_image_url: string;
-  source_type: 'upload' | 'last_frame' | 'library';
+  source_type: 'upload' | 'last_frame' | 'library' | 'url';
   source_clip_id: string | null;
+  // CHUNK 2 (Regenerate): these fields exist on the backend clip row already.
+  // We declare them on the frontend type so editingClip can be passed to
+  // ClipGenerationModal which needs them to pre-fill its state correctly.
+  base_prompt: string | null;
   refined_prompt: string;
-  duration: number;
+  rift_used: boolean;
+  rift_answers: unknown;
+  scene_description: string | null;
+  duration: 5 | 10;
   status: 'queued' | 'processing' | 'completed' | 'failed';
   generated_video_url: string | null;
   last_frame_url: string | null;
@@ -1330,6 +1337,12 @@ export default function SceneStudioPage() {
   // which defeats the purpose of "Continue from previous".
   const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library' | 'url'>('upload');
 
+  // === CHUNK 2 (Regenerate): when set, ClipGenerationModal opens in regenerate
+  // mode. Pre-fills all state from this clip's existing data and submits via
+  // PATCH with regenerate:true instead of POST. Same clip_id preserved (clip
+  // stays in place on timeline). Cleared on modal close.
+  const [editingClip, setEditingClip] = useState<ClipItem | null>(null);
+
   // === USER-INITIATED PLAYER SEEK ===
   // When user taps a thumbnail and merged playback is active, we set this
   // so the player seeks the merged video to that clip's start. Using a nonce
@@ -1551,18 +1564,29 @@ export default function SceneStudioPage() {
     alert('🚧 Duplicate coming in v2 — for now you can regenerate with the same prompt.');
   };
 
-  // Replace and Regenerate open the modal — they use the "upload" default tab
-  // (not "chain") because the user is editing an existing clip, not adding
-  // a new one in sequence.
+  // CHUNK 2 (Regenerate): Replace and Regenerate both open the modal in
+  // regenerate mode by passing the active clip via setEditingClip. The modal
+  // pre-fills all state from the clip's existing data and submits via PATCH
+  // when the user confirms. Same clip_id is preserved (clip stays in place
+  // on the timeline). Same handler for both buttons — the spec doesn't
+  // distinguish them yet; if we ever do, branch here.
   const handleReplaceClip = () => {
+    const activeClip = scene?.clips[activeClipIndex];
+    if (!activeClip) return;
     setClipDrawerOpen(false);
+    // pendingSourceType still seeds initialSourceType for fresh flows; the
+    // modal ignores it when editingClip is set and uses editingClip.source_type
     setPendingSourceType('upload');
+    setEditingClip(activeClip);
     setGenerateModalOpen(true);
   };
 
   const handleRegenerateClip = () => {
+    const activeClip = scene?.clips[activeClipIndex];
+    if (!activeClip) return;
     setClipDrawerOpen(false);
     setPendingSourceType('upload');
+    setEditingClip(activeClip);
     setGenerateModalOpen(true);
   };
 
@@ -1975,7 +1999,12 @@ export default function SceneStudioPage() {
       {/* =================== MODALS & DRAWERS =================== */}
       <ClipGenerationModal
         open={generateModalOpen}
-        onClose={() => setGenerateModalOpen(false)}
+        onClose={() => {
+          setGenerateModalOpen(false);
+          // CHUNK 2 (Regenerate): clear editing context when modal closes so
+          // the next "Add clip" opens fresh, not in regenerate mode.
+          setEditingClip(null);
+        }}
         projectId={projectId}
         sceneId={sceneId}
         nextClipNumber={scene.clips.length + 1}
@@ -1984,6 +2013,7 @@ export default function SceneStudioPage() {
         onClipCreated={fetchScene}
         onProfileUpdate={fetchProfile}
         initialSourceType={pendingSourceType}
+        editingClip={editingClip}
       />
 
       <AddClipActionSheet

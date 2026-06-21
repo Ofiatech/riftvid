@@ -37,6 +37,23 @@ interface LibraryItem {
   created_at: string;
 }
 
+// CHUNK 2 (Regenerate): when parent passes editingClip, the modal opens in
+// regenerate mode. Pre-fills state, changes header copy, and submits via PATCH
+// with regenerate:true instead of POST to create a new clip.
+interface EditingClip {
+  id: string;
+  clip_order: number;
+  source_type: 'upload' | 'last_frame' | 'library' | 'url';
+  source_image_url: string;
+  source_clip_id: string | null;
+  base_prompt: string | null;
+  refined_prompt: string;
+  rift_used: boolean;
+  rift_answers: unknown;
+  scene_description: string | null;
+  duration: 5 | 10;
+}
+
 interface ClipGenerationModalProps {
   open: boolean;
   onClose: () => void;
@@ -50,6 +67,9 @@ interface ClipGenerationModalProps {
   // When parent opens the modal via the action sheet, it tells us
   // which tab to pre-select. Default = 'upload' for backwards compat.
   initialSourceType?: SourceType;
+  // CHUNK 2 (Regenerate): when set, the modal is in regenerate mode. All
+  // state pre-fills from this clip, header copy changes, submit hits PATCH.
+  editingClip?: EditingClip | null;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -93,7 +113,12 @@ export default function ClipGenerationModal({
   onClipCreated,
   onProfileUpdate,
   initialSourceType = 'upload',
+  editingClip = null,
 }: ClipGenerationModalProps) {
+  // CHUNK 2 (Regenerate): single source-of-truth for "are we editing an
+  // existing clip vs. creating a new one." Used for header copy, button
+  // labels, and submit path branching.
+  const isRegenerating = editingClip !== null;
   // Source picker state — seeded from initialSourceType so the modal opens
   // on the tab matching the user's action sheet pick.
   const [sourceType, setSourceType] = useState<SourceType>(initialSourceType);
@@ -164,11 +189,45 @@ export default function ClipGenerationModal({
   const currentImageUrl = getCurrentImageUrl();
 
   // Sync sourceType to initialSourceType whenever the modal opens.
+  // CHUNK 2 (Regenerate): when editingClip is set, instead of seeding from
+  // initialSourceType, we pre-fill EVERY state field from the clip's existing
+  // data so the user sees their clip ready to tweak.
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    if (editingClip) {
+      // Regenerate mode — restore the clip's full state into the modal
+      setSourceType(editingClip.source_type);
+      setPrompt(editingClip.refined_prompt);
+      setBasePrompt(editingClip.base_prompt || '');
+      setDuration(editingClip.duration);
+      setAiOptimization(editingClip.rift_used);
+      setImageDescription(editingClip.scene_description);
+
+      // Pre-seed the source-specific state so the right tab shows the right thing
+      if (editingClip.source_type === 'last_frame' && editingClip.source_clip_id) {
+        setSelectedLastFrameClipId(editingClip.source_clip_id);
+      } else if (editingClip.source_type === 'library') {
+        // Treat the clip's source as a one-off library item so the URL renders
+        setSelectedLibraryItem({
+          id: editingClip.id,
+          source_image_url: editingClip.source_image_url,
+          title: null,
+          created_at: new Date().toISOString(),
+        });
+      } else if (editingClip.source_type === 'url') {
+        setUrlInput(editingClip.source_image_url);
+        setUrlPreviewUrl(editingClip.source_image_url);
+      } else {
+        // 'upload' — set previewUrl to the existing source so the user sees
+        // the image. selectedFile stays null (we don't have the original File).
+        setPreviewUrl(editingClip.source_image_url);
+      }
+    } else {
+      // Fresh creation mode — original behavior
       setSourceType(initialSourceType);
     }
-  }, [open, initialSourceType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialSourceType, editingClip?.id]);
 
   // Fetch library items when library tab is selected
   useEffect(() => {
@@ -522,63 +581,101 @@ export default function ClipGenerationModal({
     setOutOfCredits(false);
 
     try {
-      const payload: Record<string, unknown> = {
+      // Build the source-related fields once — same shape regardless of POST vs PATCH
+      const sourcePayload: Record<string, unknown> = {
+        source_type: sourceType,
+      };
+      if (sourceType === 'upload') {
+        if (selectedFile) {
+          sourcePayload.source_image_base64 = await fileToBase64(selectedFile);
+        } else if (previewUrl && previewUrl.startsWith('http')) {
+          // CHUNK 2 (Regenerate): if user is regenerating and didn't change the
+          // upload (no new file picked), previewUrl is already the existing
+          // hosted source_image_url — just pass it through.
+          sourcePayload.source_image_url = previewUrl;
+        }
+      } else if (sourceType === 'last_frame') {
+        sourcePayload.source_clip_id = selectedLastFrameClipId;
+      } else if (sourceType === 'library') {
+        sourcePayload.source_image_url = selectedLibraryItem?.source_image_url;
+      } else if (sourceType === 'url') {
+        sourcePayload.source_image_url = urlPreviewUrl;
+      }
+
+      const sharedPayload: Record<string, unknown> = {
         base_prompt: basePrompt || null,
         refined_prompt: prompt.trim(),
         rift_used: aiOptimization,
         rift_answers: answers.length > 0 ? answers : null,
         scene_description: imageDescription,
         duration,
-        source_type: sourceType,
+        ...sourcePayload,
       };
 
-      if (sourceType === 'upload') {
-        if (selectedFile) {
-          payload.source_image_base64 = await fileToBase64(selectedFile);
-        } else if (previewUrl && previewUrl.startsWith('http')) {
-          payload.source_image_url = previewUrl;
+      let createdOrUpdated: { id: string; source_image_url: string } & Record<string, unknown>;
+
+      if (isRegenerating && editingClip) {
+        // CHUNK 2 (Regenerate): PATCH the existing clip in place.
+        const patchRes = await fetch(
+          `/api/projects/${projectId}/scenes/${sceneId}/clips/${editingClip.id}`,
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              regenerate: true,
+              ...sharedPayload,
+            }),
+          }
+        );
+
+        const patched = await patchRes.json();
+
+        if (patchRes.status === 402 || patched.out_of_credits) {
+          setGenMode('idle');
+          setOutOfCredits(true);
+          onProfileUpdate();
+          return;
         }
-      } else if (sourceType === 'last_frame') {
-        payload.source_clip_id = selectedLastFrameClipId;
-      } else if (sourceType === 'library') {
-        payload.source_image_url = selectedLibraryItem?.source_image_url;
-      } else if (sourceType === 'url') {
-        // CHUNK 1 (Bug 2): URL flow sends source_image_url directly.
-        // Backend already accepts this field for the upload-with-URL path —
-        // we're reusing the same downstream contract.
-        payload.source_image_url = urlPreviewUrl;
-      }
 
-      const createRes = await fetch(
-        `/api/projects/${projectId}/scenes/${sceneId}/clips`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+        if (!patchRes.ok) throw new Error(patched.error || 'Failed to update clip');
+
+        createdOrUpdated = patched;
+      } else {
+        // Fresh creation — original POST flow
+        const createRes = await fetch(
+          `/api/projects/${projectId}/scenes/${sceneId}/clips`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(sharedPayload),
+          }
+        );
+
+        const created = await createRes.json();
+
+        if (createRes.status === 402 || created.out_of_credits) {
+          setGenMode('idle');
+          setOutOfCredits(true);
+          onProfileUpdate();
+          return;
         }
-      );
 
-      const created = await createRes.json();
+        if (!createRes.ok) throw new Error(created.error || 'Failed to create clip');
 
-      if (createRes.status === 402 || created.out_of_credits) {
-        setGenMode('idle');
-        setOutOfCredits(true);
-        onProfileUpdate();
-        return;
+        createdOrUpdated = created;
       }
-
-      if (!createRes.ok) throw new Error(created.error || 'Failed to create clip');
 
       onProfileUpdate();
       onClipCreated();
 
+      // Both paths kick off the actual video render via /api/generate-video
       const genRes = await fetch('/api/generate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          videoId: created.id,
+          videoId: createdOrUpdated.id,
           prompt: prompt.trim(),
-          imageUrl: created.source_image_url,
+          imageUrl: createdOrUpdated.source_image_url,
           duration,
           tableMode: 'clips',
         }),
@@ -630,6 +727,8 @@ export default function ClipGenerationModal({
                   ? 'Talking with Rift'
                   : chatMode === 'done'
                   ? 'Refined Prompt Ready'
+                  : isRegenerating
+                  ? `Regenerate clip ${editingClip!.clip_order}`
                   : `Clip ${nextClipNumber}`}
               </div>
               <h2 className="text-[22px] font-semibold text-white tracking-tight">
@@ -641,6 +740,8 @@ export default function ClipGenerationModal({
                   ? 'You need more credits'
                   : chatMode === 'done'
                   ? 'Review your prompt'
+                  : isRegenerating
+                  ? `Edit clip ${editingClip!.clip_order}`
                   : `Generate clip ${nextClipNumber}`}
               </h2>
               <p className="text-[13px] text-zinc-400 mt-1">
@@ -652,6 +753,8 @@ export default function ClipGenerationModal({
                   ? `You have ${credits} credit${credits === 1 ? '' : 's'} but need ${requiredCredits}.`
                   : chatMode === 'done'
                   ? 'Edit the prompt below before generating.'
+                  : isRegenerating
+                  ? 'Tweak the prompt, source, or duration — then regenerate in place.'
                   : 'Pick source image, describe motion, generate.'}
               </p>
             </div>
@@ -692,7 +795,11 @@ export default function ClipGenerationModal({
               <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4">
                 <Check className="w-6 h-6 text-emerald-300" strokeWidth={2.5} />
               </div>
-              <div className="text-[15px] font-semibold text-white mb-2">Clip {nextClipNumber} is ready</div>
+              <div className="text-[15px] font-semibold text-white mb-2">
+                {isRegenerating
+                  ? `Clip ${editingClip!.clip_order} regenerated`
+                  : `Clip ${nextClipNumber} is ready`}
+              </div>
               <div className="text-[13px] text-zinc-400 max-w-sm mx-auto">
                 Closing automatically. Your clip is now in the scene timeline.
               </div>
@@ -1355,7 +1462,9 @@ export default function ClipGenerationModal({
                       className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Wand2 className="w-3.5 h-3.5" strokeWidth={2.25} />
-                      {aiOptimization ? 'Generate with Rift' : 'Generate Clip'}
+                      {isRegenerating
+                        ? (aiOptimization ? 'Regenerate with Rift' : 'Regenerate Clip')
+                        : (aiOptimization ? 'Generate with Rift' : 'Generate Clip')}
                     </button>
                   </>
                 )}
@@ -1382,7 +1491,7 @@ export default function ClipGenerationModal({
                       className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Play className="w-3.5 h-3.5 fill-white" strokeWidth={0} />
-                      Generate Clip
+                      {isRegenerating ? 'Regenerate Clip' : 'Generate Clip'}
                     </button>
                   </>
                 )}

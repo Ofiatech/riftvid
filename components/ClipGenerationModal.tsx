@@ -592,17 +592,20 @@ export default function ClipGenerationModal({
     setPromptGenPath(null);
 
     try {
+      // CHUNK 3 fix (post-test 1): backend expects camelCase field names.
+      // Previously sent project_id/scene_id and got "sceneId and projectId
+      // are required" error. Aligning all fields to camelCase for consistency.
       const res = await fetch(`/api/clips/generate-from-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_id: projectId,
-          scene_id: sceneId,
+          projectId,
+          sceneId,
           prompt: prompt.trim(),
           duration,
-          rift_used: aiOptimization,
-          rift_answers: answers.length > 0 ? answers : null,
-          scene_description: imageDescription,
+          riftUsed: aiOptimization,
+          riftAnswers: answers.length > 0 ? answers : null,
+          sceneDescription: imageDescription,
         }),
       });
 

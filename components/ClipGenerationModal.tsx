@@ -569,15 +569,35 @@ export default function ClipGenerationModal({
   };
 
   // =========================================================================
-  // CHUNK 3 (4.3.5b): prompt-only generation submit
-  // Calls /api/clips/generate-from-prompt. Backend handles:
-  //   - Avatar detection from scene (Ideogram anchor/edit path, 3 credits)
-  //   - No-avatar fallback (Flux Dev, 1 credit)
-  // Polling uses the clip id returned, same tableMode=clips pattern.
+  // CHUNK 3 (4.3.5b): prompt-only generation submit — FIXED to match backend.
+  //
+  // Backend (/api/clips/generate-from-prompt) flow:
+  //   1. Creates the starting image (Nano Banana for avatar scenes, Flux otherwise)
+  //   2. Saves image to Supabase, inserts clip row with status='queued'
+  //   3. Returns { clip, detected_avatars, meta }
+  //
+  // After we get the response, we MUST also call /api/generate-video to
+  // actually kick off the video render. Without this, the clip sits in
+  // queued status forever.
+  //
+  // Response shape we care about:
+  //   data.clip.id              — the new clip's id (for polling)
+  //   data.clip.source_image_url — the generated starting image
+  //   data.meta.mode_used       — 'nano_banana_anchor' | 'nano_banana_edit' | 'flux_no_avatar'
   // =========================================================================
   const handleGenerateFromPrompt = async () => {
+    // Safety check: clear error if URL params somehow missing
+    if (!projectId || !sceneId) {
+      setGenMode('failed');
+      setGenError('Project or scene info is missing. Please reload the page and try again.');
+      return;
+    }
     if (!prompt.trim()) {
       setGenError('Please describe what you want to generate');
+      return;
+    }
+    if (prompt.trim().length < 5) {
+      setGenError('Please write at least 5 characters');
       return;
     }
     if (credits < 1) {
@@ -592,9 +612,9 @@ export default function ClipGenerationModal({
     setPromptGenPath(null);
 
     try {
-      // CHUNK 3 fix (post-test 1): backend expects camelCase field names.
-      // Previously sent project_id/scene_id and got "sceneId and projectId
-      // are required" error. Aligning all fields to camelCase for consistency.
+      // === Step 1: Generate starting image + create clip row ===
+      // Backend expects EXACTLY these 4 fields (verified against route.ts).
+      // Anything else is ignored.
       const res = await fetch(`/api/clips/generate-from-prompt`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -603,39 +623,75 @@ export default function ClipGenerationModal({
           sceneId,
           prompt: prompt.trim(),
           duration,
-          riftUsed: aiOptimization,
-          riftAnswers: answers.length > 0 ? answers : null,
-          sceneDescription: imageDescription,
         }),
       });
 
       const data = await res.json();
 
-      if (res.status === 402 || data.out_of_credits) {
+      if (res.status === 402 || data.error === 'out_of_credits') {
         setGenMode('idle');
         setOutOfCredits(true);
         onProfileUpdate();
         return;
       }
 
-      if (!res.ok) throw new Error(data.error || 'Failed to start generation');
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'Failed to generate scene');
+      }
 
-      // Backend tells us which path it took (avatar vs flux) so we can show
-      // accurate credit info in the success/failure state.
-      if (data.generation_path) {
-        setPromptGenPath(data.generation_path as 'avatar' | 'flux');
+      // Backend returns { clip, detected_avatars, meta }
+      const clip = data.clip;
+      if (!clip || !clip.id || !clip.source_image_url) {
+        throw new Error('Server returned an invalid response. Please try again.');
+      }
+
+      // Map backend mode → our UI label
+      // 'flux_no_avatar' → text-to-image fallback (cheaper)
+      // 'nano_banana_anchor' / 'nano_banana_edit' → avatar-consistent (premium)
+      const mode = data.meta?.mode_used as string | undefined;
+      if (mode === 'flux_no_avatar') {
+        setPromptGenPath('flux');
+      } else if (mode === 'nano_banana_anchor' || mode === 'nano_banana_edit') {
+        setPromptGenPath('avatar');
       }
 
       onProfileUpdate();
       onClipCreated();
 
+      // === Step 2: Kick off the actual video render ===
+      // Without this, the clip stays in 'queued' status forever.
+      // /api/generate-video deducts the BASE clip credit and starts Fal video.
+      const genRes = await fetch('/api/generate-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoId: clip.id,
+          prompt: prompt.trim(),
+          imageUrl: clip.source_image_url,
+          duration,
+          tableMode: 'clips',
+        }),
+      });
+
+      const genData = await genRes.json();
+
+      if (genRes.status === 402 || genData.out_of_credits) {
+        setGenMode('idle');
+        setOutOfCredits(true);
+        onProfileUpdate();
+        return;
+      }
+
+      if (!genRes.ok) {
+        throw new Error(genData.error || 'Failed to start video render');
+      }
+
       setGenMode('queued');
       setGenProgress(5);
 
-      // Poll using the clip id — same endpoint, same tableMode=clips pattern
-      const clipId = data.clip_id || data.id;
+      // Poll the clip's status using its id
       pollIntervalRef.current = setInterval(() => {
-        pollVideoStatus(clipId);
+        pollVideoStatus(clip.id);
       }, 2000);
     } catch (err) {
       setGenMode('failed');

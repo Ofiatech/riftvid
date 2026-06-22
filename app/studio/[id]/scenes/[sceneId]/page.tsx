@@ -1335,7 +1335,10 @@ export default function SceneStudioPage() {
   // The action sheet has 4 options; we need to pre-select the matching tab
   // in ClipGenerationModal. Without this, every action just opens "Upload"
   // which defeats the purpose of "Continue from previous".
-  const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library' | 'url'>('upload');
+  //
+  // CHUNK 3 (4.3.5b): added 'prompt' to the union so the action sheet can
+  // route "Generate from prompt" to the modal's new prompt-only mode.
+  const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library' | 'url' | 'prompt'>('upload');
 
   // === CHUNK 2 (Regenerate): when set, ClipGenerationModal opens in regenerate
   // mode. Pre-fills all state from this clip's existing data and submits via
@@ -1467,17 +1470,24 @@ export default function SceneStudioPage() {
   // This is the fix for the bug founder caught: previously, ALL action sheet
   // picks ignored the action and opened the modal in default "Upload" mode.
   // Now we honor the user's intent and route them to the right tab.
+  //
+  // CHUNK 3 (4.3.5b): 'prompt' now routes to the modal's new prompt-only
+  // mode. The modal sees initialSourceType='prompt' and hides the source
+  // image section entirely, submits via /api/clips/generate-from-prompt.
   const handlePickAddAction = (
     action: 'chain' | 'upload' | 'prompt' | 'url' | 'transition'
   ) => {
     if (action === 'chain') {
       setPendingSourceType('last_frame');
     } else if (action === 'url') {
-      // CHUNK 1 (Bug 2): URL action now opens its dedicated URL tab in the modal.
+      // CHUNK 1 (Bug 2): URL action opens its dedicated URL tab in the modal.
       setPendingSourceType('url');
+    } else if (action === 'prompt') {
+      // CHUNK 3 (4.3.5b): prompt mode — no image required, AI generates
+      // everything from text. Uses avatars if scene has them.
+      setPendingSourceType('prompt');
     } else {
-      // 'upload' and 'prompt' still fall back to upload tab.
-      // Prompt will get its own routing in Chunk 3 (4.3.5b).
+      // 'upload' falls back to upload tab
       setPendingSourceType('upload');
     }
     setAddActionSheetOpen(false);

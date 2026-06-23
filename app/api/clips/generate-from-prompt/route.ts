@@ -7,28 +7,33 @@
 //     sceneId: string (uuid),
 //     projectId: string (uuid),
 //     prompt: string (5-2000),
-//     duration: 5 | 10
+//     duration: 5 | 10,
+//     aspectRatio?: '9:16' | '16:9' | '1:1'   // NEW: only honored on first clip in scene
 //   }
 //
 // Behavior:
 //   1. Auth + ownership check on the scene
-//   2. Detect known avatar names mentioned in the prompt (word-boundary match)
-//   3. Pricing: read live cost from pricing_config table (admin-tunable)
-//   4. Pre-flight credit check (fail fast if user can't afford this + the eventual video gen)
-//   5. Branch on (avatars detected) × (scene has anchor):
+//   2. Resolve aspect ratio:
+//        - If scene already has aspect_ratio set → use it (ignore client)
+//        - If scene has no aspect_ratio yet → use client's choice, save to scene
+//        - If client didn't send and scene has none → default '9:16'
+//   3. Detect known avatar names mentioned in the prompt (word-boundary match)
+//   4. Pricing: read live cost from pricing_config table (admin-tunable)
+//   5. Pre-flight credit check
+//   6. Branch on (avatars detected) × (scene has anchor):
 //        avatars + no anchor   → Nano Banana Pro Edit (avatar photos as image_urls)
 //                                → save result as scene anchor
 //        avatars + has anchor  → Nano Banana Pro Edit (anchor + avatar photos)
 //                                → "preserve scene" prompt suffix locks background/outfits
 //        no avatars            → Flux Dev plain text-to-image (cheap, no anchor)
-//   6. Rehost result image to Supabase storage (Fal URLs expire)
-//   7. Insert clip row with source_type='ai_generated_scene' or 'ai_generated_flux'
-//   8. Return clip + detected avatars + meta
+//      Aspect ratio is wired into each path correctly.
+//   7. Rehost result image to Supabase storage (Fal URLs expire)
+//   8. Insert clip row with source_type='ai_generated_scene' or 'ai_generated_flux'
+//   9. Return clip + detected avatars + meta (including resolved aspect_ratio)
 //
-// The frontend then calls /api/generate-video with the clip's id to kick off
-// the actual video render. This endpoint DOES NOT deduct base video credits
-// (/api/generate-video does). It DOES deduct the EXTRA premium credits for
-// AI-scene generation.
+// IMPORTANT: This endpoint generates the IMAGE ONLY. The clip is inserted
+// with status='queued' but no video is rendered. The frontend separately
+// calls /api/generate-video when the user clicks "Make Video".
 
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
@@ -36,7 +41,7 @@ import { fal } from '@fal-ai/client';
 import { getOrCreateProfile } from '@/lib/credits';
 import { getAvatarsSupabaseClient, AvatarRecord, AvatarPhoto } from '@/lib/avatars';
 
-export const maxDuration = 180; // Nano Banana Pro can take 15-45s
+export const maxDuration = 180;
 
 // ============================================================================
 // CONSTANTS
@@ -47,9 +52,33 @@ const PROMPT_MAX = 2000;
 
 const MODEL_NANO_BANANA_EDIT = 'fal-ai/nano-banana-pro/edit';
 const MODEL_FLUX_DEV = 'fal-ai/flux/dev';
-const FLUX_IMAGE_SIZE = 'landscape_16_9'; // cinematic default for video clips
 
-// Pricing fallbacks if pricing_config lookup somehow fails
+// NEW: aspect ratio support
+type AspectRatio = '9:16' | '16:9' | '1:1';
+const VALID_ASPECTS: AspectRatio[] = ['9:16', '16:9', '1:1'];
+const DEFAULT_ASPECT: AspectRatio = '9:16';
+
+// Flux supports these named sizes — map our app's aspects to its tokens.
+// Return type is narrowed to literal strings so it matches Fal's ImageSize union.
+type FluxImageSize = 'portrait_16_9' | 'landscape_16_9' | 'square_hd';
+
+function fluxImageSizeFor(aspect: AspectRatio): FluxImageSize {
+  switch (aspect) {
+    case '9:16': return 'portrait_16_9'; // Flux's portrait token (9:16 vertical)
+    case '16:9': return 'landscape_16_9';
+    case '1:1':  return 'square_hd';
+  }
+}
+
+// Nano Banana doesn't take a structured aspect param — we steer it via prompt.
+function nanoBananaAspectDirective(aspect: AspectRatio): string {
+  switch (aspect) {
+    case '9:16': return 'Render in vertical 9:16 portrait aspect ratio, taller than wide, optimized for mobile screens.';
+    case '16:9': return 'Render in horizontal 16:9 widescreen cinema aspect ratio.';
+    case '1:1':  return 'Render in 1:1 square aspect ratio.';
+  }
+}
+
 const FALLBACK_PRICING: Record<string, number> = {
   clip_normal_5s: 1,
   clip_normal_10s: 2,
@@ -68,6 +97,7 @@ interface GenerateFromPromptBody {
   projectId: string;
   prompt: string;
   duration: 5 | 10;
+  aspectRatio?: AspectRatio;
 }
 
 interface DetectedAvatar {
@@ -82,6 +112,7 @@ interface SceneRecord {
   project_id: string;
   user_id: string;
   anchor_image_url: string | null;
+  aspect_ratio: AspectRatio | null;
 }
 
 interface ClipRecord {
@@ -104,7 +135,7 @@ interface FalImageResult {
 }
 
 // ============================================================================
-// PRICING LOOKUP — reads from pricing_config table at runtime
+// PRICING LOOKUP
 // ============================================================================
 
 async function getPricingCost(
@@ -150,8 +181,6 @@ function detectAvatarsInPrompt(
     }
   }
 
-  // Sort by first occurrence so the primary character (mentioned first) is
-  // the first reference image — Nano Banana respects ordering for anchoring.
   matches.sort((a, b) => a.firstIndex - b.firstIndex);
 
   return matches.map(({ avatar }) => {
@@ -171,15 +200,14 @@ function detectAvatarsInPrompt(
 }
 
 // ============================================================================
-// PROMPT CONSTRUCTION
+// PROMPT CONSTRUCTION — now aspect-aware
 // ============================================================================
 
-/**
- * For the FIRST clip in a scene (no anchor yet) — establish the scene.
- * Append directives that help Nano Banana use the avatar reference photos
- * consistently across all detected characters.
- */
-function buildAnchorPrompt(userPrompt: string, detected: DetectedAvatar[]): string {
+function buildAnchorPrompt(
+  userPrompt: string,
+  detected: DetectedAvatar[],
+  aspect: AspectRatio
+): string {
   const namesList = detected.map((a) => a.name).join(' and ');
   const descriptions = detected
     .filter((a) => a.description && a.description.trim().length > 0)
@@ -195,22 +223,24 @@ function buildAnchorPrompt(userPrompt: string, detected: DetectedAvatar[]): stri
       ? ` Additional character details — ${descriptions.join('; ')}.`
       : '';
 
-  return `${userPrompt}\n\n${characterDirective}${descBlock}\n\nRender as a cinematic wide shot, photorealistic, natural lighting.`;
+  const aspectDirective = nanoBananaAspectDirective(aspect);
+
+  return `${userPrompt}\n\n${characterDirective}${descBlock}\n\nRender as a cinematic wide shot, photorealistic, natural lighting. ${aspectDirective}`;
 }
 
-/**
- * For SUBSEQUENT clips in the same scene (anchor exists) — preserve scene.
- * This is where Nano Banana's strength comes in: explicit "keep X, change Y"
- * prompting tells the model what to lock from the reference anchor image.
- */
-function buildEditPrompt(userPrompt: string, detected: DetectedAvatar[]): string {
+function buildEditPrompt(
+  userPrompt: string,
+  detected: DetectedAvatar[],
+  aspect: AspectRatio
+): string {
   const namesList = detected.map((a) => a.name).join(' and ');
+  const aspectDirective = nanoBananaAspectDirective(aspect);
 
-  return `${userPrompt}\n\nKeep the background, lighting, camera angle, and overall composition identical to the reference image. Preserve ${namesList}'s facial features, hairstyle, and clothing exactly as shown in the reference image. Only change the action, pose, or expression as described above. Do not change the setting, time of day, or wardrobe.`;
+  return `${userPrompt}\n\nKeep the background, lighting, camera angle, and overall composition identical to the reference image. Preserve ${namesList}'s facial features, hairstyle, and clothing exactly as shown in the reference image. Only change the action, pose, or expression as described above. Do not change the setting, time of day, or wardrobe. ${aspectDirective}`;
 }
 
 // ============================================================================
-// IMAGE REHOSTING — Fal URLs expire, so we mirror to Supabase storage
+// IMAGE REHOSTING
 // ============================================================================
 
 function inferImageExt(contentType: string, url: string): string {
@@ -244,7 +274,8 @@ async function rehostImageToSupabase(
   const arrayBuffer = await res.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  const path = `scenes/${userId}/${sceneId}/${filenameSuffix}.${ext}`;
+  // Timestamp in filename so regenerations don't collide
+  const path = `scenes/${userId}/${sceneId}/${filenameSuffix}-${Date.now()}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from('avatars')
@@ -259,8 +290,7 @@ async function rehostImageToSupabase(
 }
 
 // ============================================================================
-// CREDIT DEDUCTION — for the premium AI-scene portion only
-// (/api/generate-video deducts the BASE clip credits later when video runs)
+// CREDIT DEDUCTION
 // ============================================================================
 
 async function deductExtraCredits(
@@ -268,7 +298,7 @@ async function deductExtraCredits(
   userId: string,
   amount: number
 ): Promise<number | null> {
-  if (amount <= 0) return null; // no-op
+  if (amount <= 0) return null;
 
   const { data: profile, error: fetchError } = await supabase
     .from('profiles')
@@ -282,7 +312,6 @@ async function deductExtraCredits(
   const current = p.credits_balance ?? 0;
   if (current < amount) return null;
 
-  // Optimistic concurrency: only decrement if balance still matches
   const { data: updated, error: updateError } = await supabase
     .from('profiles')
     .update({
@@ -330,7 +359,6 @@ async function refundCredits(
 
 export async function POST(req: NextRequest) {
   try {
-    // --- Auth ---
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -343,7 +371,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- Parse + validate input ---
     let body: GenerateFromPromptBody;
     try {
       body = (await req.json()) as GenerateFromPromptBody;
@@ -355,6 +382,18 @@ export async function POST(req: NextRequest) {
     const sceneId = (body.sceneId ?? '').trim();
     const projectId = (body.projectId ?? '').trim();
     const duration = body.duration === 10 ? 10 : 5;
+
+    // NEW: validate aspectRatio if provided
+    let clientAspect: AspectRatio | null = null;
+    if (body.aspectRatio) {
+      if (!VALID_ASPECTS.includes(body.aspectRatio)) {
+        return NextResponse.json(
+          { error: `Invalid aspectRatio. Must be one of: ${VALID_ASPECTS.join(', ')}` },
+          { status: 400 }
+        );
+      }
+      clientAspect = body.aspectRatio;
+    }
 
     if (!sceneId || !projectId) {
       return NextResponse.json(
@@ -377,10 +416,10 @@ export async function POST(req: NextRequest) {
 
     const supabase = getAvatarsSupabaseClient();
 
-    // --- Fetch scene, verify ownership, get anchor status ---
+    // Fetch scene with aspect_ratio column
     const { data: sceneRow, error: sceneError } = await supabase
       .from('scenes')
-      .select('id, project_id, user_id, anchor_image_url')
+      .select('id, project_id, user_id, anchor_image_url, aspect_ratio')
       .eq('id', sceneId)
       .eq('user_id', userId)
       .single();
@@ -397,7 +436,28 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- Detect avatars in prompt ---
+    // NEW: Resolve aspect ratio
+    // Scene's existing aspect_ratio always wins (locks the shape across all
+    // clips in a scene). Only the FIRST clip in a scene gets to set it.
+    let aspectRatio: AspectRatio;
+    let aspectWasSetNow = false;
+    if (scene.aspect_ratio) {
+      aspectRatio = scene.aspect_ratio;
+    } else if (clientAspect) {
+      aspectRatio = clientAspect;
+      const { error: aspectUpdateError } = await supabase
+        .from('scenes')
+        .update({ aspect_ratio: aspectRatio })
+        .eq('id', sceneId)
+        .eq('user_id', userId);
+      if (!aspectUpdateError) {
+        aspectWasSetNow = true;
+      }
+    } else {
+      aspectRatio = DEFAULT_ASPECT;
+    }
+
+    // Detect avatars
     const { data: avatarRows, error: avatarsError } = await supabase
       .from('avatars')
       .select('*')
@@ -415,9 +475,7 @@ export async function POST(req: NextRequest) {
     const detectedAvatars = detectAvatarsInPrompt(prompt, userAvatars);
     const hasAvatars = detectedAvatars.length > 0;
 
-    // --- Determine pricing ---
-    // Total cost = base clip cost (deducted by /api/generate-video later) + extra premium
-    // We only deduct the EXTRA here. /api/generate-video deducts the base.
+    // Pricing
     let totalKey: string;
     let baseKey: string;
     if (hasAvatars) {
@@ -432,7 +490,7 @@ export async function POST(req: NextRequest) {
     const baseCost = await getPricingCost(supabase, baseKey);
     const extraCost = Math.max(0, totalCost - baseCost);
 
-    // --- Pre-flight credit check (must afford TOTAL cost: base + extra) ---
+    // Pre-flight credit check
     const profile = await getOrCreateProfile(userId);
     const balance = (profile as { credits_balance?: number } | null)?.credits_balance ?? 0;
     if (balance < totalCost) {
@@ -449,7 +507,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // --- Determine clip_order ---
+    // Determine clip_order
     const { count: existingClipCount, error: countError } = await supabase
       .from('clips')
       .select('id', { count: 'exact', head: true })
@@ -466,12 +524,11 @@ export async function POST(req: NextRequest) {
 
     const clipOrder = existingClipCount ?? 0;
 
-    // --- Deduct EXTRA credits upfront (refunded if generation fails) ---
+    // Deduct EXTRA credits upfront
     let creditsAfterExtra: number | null = balance;
     if (extraCost > 0) {
       creditsAfterExtra = await deductExtraCredits(supabase, userId, extraCost);
       if (creditsAfterExtra === null) {
-        // Race: someone else spent credits between check and deduct
         return NextResponse.json(
           {
             error: 'out_of_credits',
@@ -485,7 +542,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ========================================================================
-    // BRANCH: generate the source image based on (avatars × anchor) state
+    // Generate image based on (avatars × anchor) state
     // ========================================================================
     fal.config({ credentials: process.env.FAL_KEY });
 
@@ -498,16 +555,12 @@ export async function POST(req: NextRequest) {
 
     try {
       if (hasAvatars && !scene.anchor_image_url) {
-        // ============================================================
-        // FIRST CLIP IN SCENE — generate anchor via Nano Banana Pro Edit
-        // image_urls = avatars only (no anchor yet)
-        // ============================================================
         modeUsed = 'nano_banana_anchor';
-        const anchorPrompt = buildAnchorPrompt(prompt, detectedAvatars);
+        const anchorPrompt = buildAnchorPrompt(prompt, detectedAvatars, aspectRatio);
         const refUrls = detectedAvatars
           .map((a) => a.primary_photo_url)
           .filter((u) => u && u.length > 0)
-          .slice(0, 14); // Nano Banana limit
+          .slice(0, 14);
 
         const result = (await fal.subscribe(MODEL_NANO_BANANA_EDIT, {
           input: {
@@ -521,12 +574,8 @@ export async function POST(req: NextRequest) {
         if (!url) throw new Error('Nano Banana returned no image');
         generatedExternalUrl = url;
       } else if (hasAvatars && scene.anchor_image_url) {
-        // ============================================================
-        // SUBSEQUENT CLIP — preserve scene via Nano Banana Pro Edit
-        // image_urls = [anchor, ...avatar photos]
-        // ============================================================
         modeUsed = 'nano_banana_edit';
-        const editPrompt = buildEditPrompt(prompt, detectedAvatars);
+        const editPrompt = buildEditPrompt(prompt, detectedAvatars, aspectRatio);
         const refUrls = [
           scene.anchor_image_url,
           ...detectedAvatars
@@ -546,14 +595,12 @@ export async function POST(req: NextRequest) {
         if (!url) throw new Error('Nano Banana Edit returned no image');
         generatedExternalUrl = url;
       } else {
-        // ============================================================
-        // NO AVATARS — Flux Dev plain text-to-image (cheap fallback)
-        // ============================================================
         modeUsed = 'flux_no_avatar';
+        // NEW: pass the correct Flux image_size for this aspect
         const result = (await fal.subscribe(MODEL_FLUX_DEV, {
           input: {
             prompt,
-            image_size: FLUX_IMAGE_SIZE,
+            image_size: fluxImageSizeFor(aspectRatio),
           },
           logs: false,
         })) as FalImageResult;
@@ -563,7 +610,6 @@ export async function POST(req: NextRequest) {
         generatedExternalUrl = url;
       }
     } catch (err) {
-      // Refund any premium credits we charged before the call
       if (extraCost > 0) {
         await refundCredits(supabase, userId, extraCost);
       }
@@ -590,9 +636,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ========================================================================
-    // Rehost image to Supabase storage (Fal URLs expire)
-    // ========================================================================
+    // Rehost to Supabase
     let supabaseImageUrl: string;
     try {
       const filenameSuffix =
@@ -622,9 +666,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ========================================================================
-    // If this was the anchor (first clip in scene with avatars) — save to scene
-    // ========================================================================
+    // Save scene anchor if this was the first avatar clip
     if (modeUsed === 'nano_banana_anchor' && !scene.anchor_image_url) {
       const { error: anchorErr } = await supabase
         .from('scenes')
@@ -638,9 +680,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ========================================================================
-    // Insert the clip row
-    // ========================================================================
+    // Insert clip row (image only — no video yet)
     const sourceType =
       modeUsed === 'flux_no_avatar' ? 'ai_generated_flux' : 'ai_generated_scene';
 
@@ -687,6 +727,8 @@ export async function POST(req: NextRequest) {
           scene_had_anchor: scene.anchor_image_url !== null,
           clip_order: clipOrder,
           source_image_url: supabaseImageUrl,
+          aspect_ratio: aspectRatio,
+          aspect_was_set_now: aspectWasSetNow,
           pricing: {
             total_cost: totalCost,
             base_cost: baseCost,

@@ -47,6 +47,9 @@ interface SceneDetail {
   total_duration: number;
   status: string;
   project_id: string;
+  // CHUNK 3.5: aspect ratio is locked at the scene level. First clip in scene
+  // picks it; subsequent clips inherit. null = not yet set (first clip will pick).
+  aspect_ratio: '9:16' | '16:9' | '1:1' | null;
   clips: ClipItem[];
 }
 
@@ -2024,6 +2027,9 @@ export default function SceneStudioPage() {
         onProfileUpdate={fetchProfile}
         initialSourceType={pendingSourceType}
         editingClip={editingClip}
+        // CHUNK 3 (4.3.5b): scene's locked aspect ratio. null = first clip in
+        // scene, modal will show the aspect picker. Set = modal skips picker.
+        sceneAspectRatio={scene.aspect_ratio}
       />
 
       <AddClipActionSheet

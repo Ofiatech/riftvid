@@ -65,12 +65,8 @@ interface ClipGenerationModalProps {
   onProfileUpdate: () => void;
   initialSourceType?: SourceType;
   editingClip?: EditingClip | null;
-  // NEW: scene's locked aspect ratio. null = needs detection or picker.
+  // NEW: scene's locked aspect ratio. null = first clip in scene, user picks.
   sceneAspectRatio?: AspectRatio | null;
-  // NEW: source image URL of the first existing clip in the scene (if any).
-  // Lets us auto-detect aspect when sceneAspectRatio is null but clips exist
-  // (e.g. clips 1-4 came from upload, user adds clip 5 via prompt).
-  firstExistingClipImageUrl?: string | null;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -107,40 +103,6 @@ function aspectClassFor(aspect: AspectRatio | null): string {
   return 'aspect-video'; // 16:9 default
 }
 
-// Read width/height from an image URL and snap to one of our 3 aspects.
-// Used when a scene has existing clips but no aspect_ratio saved in DB yet
-// (e.g. clips 1-4 came from upload/chain, then user adds clip 5 via prompt).
-// Detection is client-side via the browser's Image() API.
-function detectAspectFromUrl(url: string): Promise<AspectRatio> {
-  return new Promise((resolve) => {
-    if (typeof window === 'undefined') {
-      resolve('9:16'); // SSR fallback
-      return;
-    }
-    const img = new window.Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const w = img.naturalWidth;
-      const h = img.naturalHeight;
-      if (!w || !h) {
-        resolve('9:16');
-        return;
-      }
-      const ratio = w / h;
-      // Snap to closest of our 3 standard aspects
-      if (ratio >= 1.3) {
-        resolve('16:9');
-      } else if (ratio <= 0.85) {
-        resolve('9:16');
-      } else {
-        resolve('1:1');
-      }
-    };
-    img.onerror = () => resolve('9:16'); // default on load failure
-    img.src = url;
-  });
-}
-
 export default function ClipGenerationModal({
   open,
   onClose,
@@ -154,7 +116,6 @@ export default function ClipGenerationModal({
   initialSourceType = 'upload',
   editingClip = null,
   sceneAspectRatio = null,
-  firstExistingClipImageUrl = null,
 }: ClipGenerationModalProps) {
   const isRegenerating = editingClip !== null;
   const isPromptMode = !isRegenerating && initialSourceType === 'prompt';
@@ -217,9 +178,6 @@ export default function ClipGenerationModal({
   // Image generation states (separate from video generation)
   const [imageGenerating, setImageGenerating] = useState(false);
   const [imageGenError, setImageGenError] = useState<string | null>(null);
-  // True while we're detecting aspect from an existing clip's image dimensions.
-  // During this window, the prompt UI is visible but Generate Image is disabled.
-  const [detectingAspect, setDetectingAspect] = useState(false);
   // Video motion choice (same prompt or different)
   const [useDifferentMotion, setUseDifferentMotion] = useState(false);
   const [motionPrompt, setMotionPrompt] = useState('');
@@ -277,42 +235,21 @@ export default function ClipGenerationModal({
     } else {
       setSourceType(initialSourceType);
 
-      // CHUNK 3.5 + bug fix: initialize prompt-mode phase based on what's
-      // available. Three cases:
-      //
-      //   1. Scene has aspect_ratio explicitly saved → use it, skip picker
-      //   2. Scene has existing clips but no saved aspect → DETECT from the
-      //      first clip's image dimensions, skip picker
-      //   3. Truly first clip in scene (no clips, no saved aspect) → show picker
-      //
-      // Case 2 is the fix for: founder added clips 1-4 via upload/chain (none
-      // of those flows set scene.aspect_ratio), then tried prompt mode for
-      // clip 5 — used to wrongly show the picker.
+      // CHUNK 3.5: initialize prompt-mode phase based on scene aspect
       if (initialSourceType === 'prompt') {
         if (sceneAspectRatio) {
-          // Case 1
+          // Scene already has aspect locked — skip aspect picker
           setSelectedAspect(sceneAspectRatio);
           setPromptPhase('prompt');
-          setDetectingAspect(false);
-        } else if (firstExistingClipImageUrl) {
-          // Case 2 — detect, hold the prompt UI in a disabled state until done
-          setSelectedAspect(null);
-          setPromptPhase('prompt');
-          setDetectingAspect(true);
-          detectAspectFromUrl(firstExistingClipImageUrl).then((detected) => {
-            setSelectedAspect(detected);
-            setDetectingAspect(false);
-          });
         } else {
-          // Case 3
+          // First clip in scene — let user pick aspect
           setSelectedAspect(null);
           setPromptPhase('aspect');
-          setDetectingAspect(false);
         }
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialSourceType, editingClip?.id, sceneAspectRatio, firstExistingClipImageUrl]);
+  }, [open, initialSourceType, editingClip?.id, sceneAspectRatio]);
 
   // Library fetch
   useEffect(() => {
@@ -1029,7 +966,7 @@ export default function ClipGenerationModal({
     if (outOfCredits) return 'You need more credits';
 
     if (isPromptMode) {
-      if (promptPhase === 'aspect') return 'Choose canvas size';
+      if (promptPhase === 'aspect') return 'Pick a video shape';
       if (promptPhase === 'prompt') return 'Describe your scene';
       if (promptPhase === 'image_ready') return 'Review your image';
       if (promptPhase === 'video_choice') return 'How should it move?';
@@ -1046,7 +983,7 @@ export default function ClipGenerationModal({
     if (outOfCredits) return `You have ${credits} credit${credits === 1 ? '' : 's'} but need at least 1.`;
 
     if (isPromptMode) {
-      if (promptPhase === 'aspect') return 'This locks the canvas for every clip in this scene.';
+      if (promptPhase === 'aspect') return 'This locks the shape for all clips in this scene.';
       if (promptPhase === 'prompt') return 'Type what you want. AI creates the starting image.';
       if (promptPhase === 'image_ready') return 'Not happy? Regenerate. Happy? Make the video.';
       if (promptPhase === 'video_choice') return 'Should the video move based on your prompt, or do you want to describe motion separately?';
@@ -1194,7 +1131,7 @@ export default function ClipGenerationModal({
                   {promptPhase === 'aspect' && (
                     <div className="mb-5">
                       <label className="block text-[12px] font-medium text-zinc-300 mb-3">
-                        Choose canvas size for this scene
+                        Pick the shape for this scene
                       </label>
                       <div className="grid grid-cols-3 gap-2">
                         {([
@@ -1229,7 +1166,7 @@ export default function ClipGenerationModal({
                         })}
                       </div>
                       <div className="mt-3 px-3 py-2 rounded-lg bg-white/[0.02] border border-white/[0.05] text-[11px] text-zinc-400 leading-relaxed">
-                        <span className="font-semibold text-white">Note:</span> All clips in this scene will use the canvas you pick. Future clips will inherit it automatically.
+                        <span className="font-semibold text-white">Note:</span> All clips in this scene will use the shape you pick. Future clips will inherit it automatically.
                       </div>
                     </div>
                   )}
@@ -1238,33 +1175,22 @@ export default function ClipGenerationModal({
                   {promptPhase === 'prompt' && (
                     <>
                       {/* Aspect chip at top */}
-                      <div className="mb-4 flex items-center gap-2 flex-wrap">
-                        {detectingAspect ? (
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-500/15 border border-zinc-500/25 text-[10px] font-semibold text-zinc-300">
-                            <Loader2 className="w-3 h-3 animate-spin" strokeWidth={2} />
-                            Detecting size from your scene...
-                          </div>
+                      <div className="mb-4 flex items-center gap-2">
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/15 border border-purple-500/25 text-[10px] font-semibold text-purple-200">
+                          {selectedAspect === '9:16' && <Smartphone className="w-3 h-3" strokeWidth={2} />}
+                          {selectedAspect === '16:9' && <Monitor className="w-3 h-3" strokeWidth={2} />}
+                          {selectedAspect === '1:1' && <SquareIcon className="w-3 h-3" strokeWidth={2} />}
+                          {selectedAspect}
+                        </div>
+                        {sceneAspectRatio ? (
+                          <span className="text-[10px] text-zinc-500">Locked — matches your scene</span>
                         ) : (
-                          <>
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-500/15 border border-purple-500/25 text-[10px] font-semibold text-purple-200">
-                              {selectedAspect === '9:16' && <Smartphone className="w-3 h-3" strokeWidth={2} />}
-                              {selectedAspect === '16:9' && <Monitor className="w-3 h-3" strokeWidth={2} />}
-                              {selectedAspect === '1:1' && <SquareIcon className="w-3 h-3" strokeWidth={2} />}
-                              {selectedAspect}
-                            </div>
-                            {sceneAspectRatio ? (
-                              <span className="text-[10px] text-zinc-500">Locked — matches your scene</span>
-                            ) : firstExistingClipImageUrl ? (
-                              <span className="text-[10px] text-zinc-500">Auto-matched to your other clips</span>
-                            ) : (
-                              <button
-                                onClick={() => setPromptPhase('aspect')}
-                                className="text-[10px] text-purple-300 hover:text-purple-200 transition-colors"
-                              >
-                                Change
-                              </button>
-                            )}
-                          </>
+                          <button
+                            onClick={() => setPromptPhase('aspect')}
+                            className="text-[10px] text-purple-300 hover:text-purple-200 transition-colors"
+                          >
+                            Change
+                          </button>
                         )}
                       </div>
 
@@ -2046,20 +1972,11 @@ export default function ClipGenerationModal({
                         <button onClick={handleClose} className="px-4 py-2 rounded-lg text-[13px] font-medium text-zinc-400 hover:text-white hover:bg-white/[0.03] transition-colors">Cancel</button>
                         <button
                           onClick={handleGenerateImage}
-                          disabled={!prompt.trim() || prompt.trim().length < 5 || !selectedAspect || detectingAspect}
+                          disabled={!prompt.trim() || prompt.trim().length < 5 || !selectedAspect}
                           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-b from-purple-500 to-purple-600 hover:from-purple-400 hover:to-purple-500 text-white text-[13px] font-semibold shadow-lg shadow-purple-500/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          {detectingAspect ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" strokeWidth={2.25} />
-                              Detecting size...
-                            </>
-                          ) : (
-                            <>
-                              <ImageIcon className="w-3.5 h-3.5" strokeWidth={2.25} />
-                              Generate Image
-                            </>
-                          )}
+                          <ImageIcon className="w-3.5 h-3.5" strokeWidth={2.25} />
+                          Generate Image
                         </button>
                       </>
                     )}

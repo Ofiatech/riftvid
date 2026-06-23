@@ -2030,10 +2030,6 @@ export default function SceneStudioPage() {
         // CHUNK 3 (4.3.5b): scene's locked aspect ratio. null = first clip in
         // scene, modal will show the aspect picker. Set = modal skips picker.
         sceneAspectRatio={scene.aspect_ratio}
-        // Bug fix: when scene has existing clips but no saved aspect_ratio
-        // (clips 1-N came from upload/chain/etc), modal uses this URL to
-        // detect aspect from the image dimensions and skip the picker.
-        firstExistingClipImageUrl={scene.clips[0]?.source_image_url || null}
       />
 
       <AddClipActionSheet

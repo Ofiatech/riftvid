@@ -782,8 +782,11 @@ export default function ClipGenerationModal({
         sourcePayload.source_type = 'url';
         sourcePayload.source_image_url = urlPreviewUrl;
       } else if (sourceType === 'prompt') {
-        // AI-generated image flows through the URL source path.
-        sourcePayload.source_type = 'url';
+        // AI-generated image — backend's clip POST endpoint rejects
+        // source_type='url' but accepts source_type='upload' with a
+        // source_image_url (which is how Upload mode handles already-hosted
+        // images during regenerate). Use that path.
+        sourcePayload.source_type = 'upload';
         sourcePayload.source_image_url = promptGeneratedImageUrl;
       }
 

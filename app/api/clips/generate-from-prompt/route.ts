@@ -2,13 +2,23 @@
 //
 // POST /api/clips/generate-from-prompt
 //
+// IMAGE-ONLY ENDPOINT (4.3.5b revised, June 2026)
+// =============================================================================
+// This endpoint generates ONLY a starting image from a text prompt. It does
+// NOT insert a clip row in the database. The frontend uses this to power the
+// "Generate from Prompt" tab in the clip generation modal. Once the user
+// clicks "Use This Image", the modal sends that image URL through the
+// existing POST /api/projects/[id]/scenes/[sceneId]/clips path — same path
+// Upload mode uses. That path reliably creates the clip AND kicks off the
+// video render in one flow, fixing the "stuck in queued" bug.
+//
 // Body:
 //   {
 //     sceneId: string (uuid),
 //     projectId: string (uuid),
 //     prompt: string (5-2000),
 //     duration: 5 | 10,
-//     aspectRatio?: '9:16' | '16:9' | '1:1'   // NEW: only honored on first clip in scene
+//     aspectRatio?: '9:16' | '16:9' | '1:1'   // only honored on first clip in scene
 //   }
 //
 // Behavior:
@@ -19,21 +29,20 @@
 //        - If client didn't send and scene has none → default '9:16'
 //   3. Detect known avatar names mentioned in the prompt (word-boundary match)
 //   4. Pricing: read live cost from pricing_config table (admin-tunable)
-//   5. Pre-flight credit check
-//   6. Branch on (avatars detected) × (scene has anchor):
+//   5. Pre-flight credit check (vs totalCost — whole flow must be affordable)
+//   6. Deduct ONLY extraCost (image gen premium). Base video cost is charged
+//      later by /api/generate-video when render starts.
+//   7. Branch on (avatars detected) × (scene has anchor):
 //        avatars + no anchor   → Nano Banana Pro Edit (avatar photos as image_urls)
 //                                → save result as scene anchor
 //        avatars + has anchor  → Nano Banana Pro Edit (anchor + avatar photos)
 //                                → "preserve scene" prompt suffix locks background/outfits
 //        no avatars            → Flux Dev plain text-to-image (cheap, no anchor)
 //      Aspect ratio is wired into each path correctly.
-//   7. Rehost result image to Supabase storage (Fal URLs expire)
-//   8. Insert clip row with source_type='ai_generated_scene' or 'ai_generated_flux'
-//   9. Return clip + detected avatars + meta (including resolved aspect_ratio)
-//
-// IMPORTANT: This endpoint generates the IMAGE ONLY. The clip is inserted
-// with status='queued' but no video is rendered. The frontend separately
-// calls /api/generate-video when the user clicks "Make Video".
+//   8. Rehost result image to Supabase storage (Fal URLs expire)
+//   9. Save aspect_ratio to scene if not already set
+//  10. Save anchor_image_url to scene if first avatar clip in scene
+//  11. Return imageUrl + meta. NO clip insert.
 
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
@@ -115,18 +124,8 @@ interface SceneRecord {
   aspect_ratio: AspectRatio | null;
 }
 
-interface ClipRecord {
-  id: string;
-  scene_id: string;
-  project_id: string;
-  user_id: string;
-  clip_order: number;
-  source_image_url: string;
-  source_type: string;
-  refined_prompt: string;
-  duration: number;
-  status: string;
-}
+// (4.3.5b revised) ClipRecord interface removed — this endpoint no longer
+// inserts a clip row.
 
 interface FalImageResult {
   data?: {
@@ -507,22 +506,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Determine clip_order
-    const { count: existingClipCount, error: countError } = await supabase
-      .from('clips')
-      .select('id', { count: 'exact', head: true })
-      .eq('scene_id', sceneId)
-      .eq('user_id', userId);
-
-    if (countError) {
-      console.error('Clip count error:', countError);
-      return NextResponse.json(
-        { error: 'Failed to count clips' },
-        { status: 500 }
-      );
-    }
-
-    const clipOrder = existingClipCount ?? 0;
+    // (4.3.5b revised) No clip_order counting needed — this endpoint no
+    // longer inserts a clip. The frontend will create the clip later via
+    // POST /api/projects/[id]/scenes/[sceneId]/clips, which handles ordering.
 
     // Deduct EXTRA credits upfront
     let creditsAfterExtra: number | null = balance;
@@ -636,13 +622,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Rehost to Supabase
+    // Rehost to Supabase. No clip_order — use a generic 'prompt-draft' suffix
+    // since rehostImageToSupabase appends Date.now() for uniqueness.
     let supabaseImageUrl: string;
     try {
-      const filenameSuffix =
-        modeUsed === 'nano_banana_anchor' || modeUsed === 'flux_no_avatar'
-          ? `clip-${clipOrder}-source`
-          : `clip-${clipOrder}-edit`;
+      const filenameSuffix = `prompt-draft-${modeUsed}`;
 
       supabaseImageUrl = await rehostImageToSupabase(
         supabase,
@@ -680,42 +664,15 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Insert clip row (image only — no video yet)
-    const sourceType =
-      modeUsed === 'flux_no_avatar' ? 'ai_generated_flux' : 'ai_generated_scene';
-
-    const { data: insertedClip, error: insertError } = await supabase
-      .from('clips')
-      .insert({
-        scene_id: sceneId,
-        project_id: projectId,
-        user_id: userId,
-        clip_order: clipOrder,
-        source_image_url: supabaseImageUrl,
-        source_type: sourceType,
-        refined_prompt: prompt,
-        scene_description: prompt,
-        duration,
-        status: 'queued',
-      })
-      .select('*')
-      .single();
-
-    if (insertError || !insertedClip) {
-      if (extraCost > 0) await refundCredits(supabase, userId, extraCost);
-      console.error('Clip insert error:', insertError);
-      return NextResponse.json(
-        {
-          error: 'clip_insert_failed',
-          message: 'Image generated but failed to create clip record',
-        },
-        { status: 500 }
-      );
-    }
-
+    // (4.3.5b revised) NO clip insert here. The image URL goes back to the
+    // frontend; the user clicks "Use This Image" and the modal creates the
+    // clip via POST /api/projects/[id]/scenes/[sceneId]/clips — the same
+    // proven path Upload mode uses, which creates the clip AND kicks off
+    // the video render in one flow. Fixes the "stuck in queued" bug.
     return NextResponse.json(
       {
-        clip: insertedClip as ClipRecord,
+        imageUrl: supabaseImageUrl,
+        aspectRatio,
         detected_avatars: detectedAvatars.map((a) => ({
           id: a.id,
           name: a.name,
@@ -725,8 +682,6 @@ export async function POST(req: NextRequest) {
           mode_used: modeUsed,
           anchor_was_created: anchorWasCreated,
           scene_had_anchor: scene.anchor_image_url !== null,
-          clip_order: clipOrder,
-          source_image_url: supabaseImageUrl,
           aspect_ratio: aspectRatio,
           aspect_was_set_now: aspectWasSetNow,
           pricing: {
@@ -739,7 +694,7 @@ export async function POST(req: NextRequest) {
           },
         },
       },
-      { status: 201 }
+      { status: 200 }
     );
   } catch (err) {
     console.error('/api/clips/generate-from-prompt error:', err);

@@ -1339,9 +1339,11 @@ export default function SceneStudioPage() {
   // in ClipGenerationModal. Without this, every action just opens "Upload"
   // which defeats the purpose of "Continue from previous".
   //
-  // CHUNK 3 (4.3.5b): added 'prompt' to the union so the action sheet can
-  // route "Generate from prompt" to the modal's new prompt-only mode.
-  const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'library' | 'url' | 'prompt'>('upload');
+  // CHUNK 3 (4.3.5b revised, June 2026): 'prompt' is now a regular source
+  // tab in the modal (replacing Library). 'library' removed from this union
+  // since the action sheet no longer exposes it and the modal no longer has
+  // a Library tab.
+  const [pendingSourceType, setPendingSourceType] = useState<'upload' | 'last_frame' | 'url' | 'prompt'>('upload');
 
   // === CHUNK 2 (Regenerate): when set, ClipGenerationModal opens in regenerate
   // mode. Pre-fills all state from this clip's existing data and submits via
@@ -2030,6 +2032,10 @@ export default function SceneStudioPage() {
         // CHUNK 3 (4.3.5b): scene's locked aspect ratio. null = first clip in
         // scene, modal will show the aspect picker. Set = modal skips picker.
         sceneAspectRatio={scene.aspect_ratio}
+        // Bug fix: when scene has existing clips but no saved aspect_ratio
+        // (clips 1-N came from upload/chain/etc), modal uses this URL to
+        // detect aspect from the image dimensions and skip the picker.
+        firstExistingClipImageUrl={scene.clips[0]?.source_image_url || null}
       />
 
       <AddClipActionSheet

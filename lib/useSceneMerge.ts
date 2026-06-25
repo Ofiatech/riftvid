@@ -2,18 +2,20 @@
 
 // useSceneMerge — React hook for Cloudinary scene merging
 //
-// v2 FIX (Session 11C-1 bugfix):
-// Original bug: when user reopened a scene with new clips added since last
-// merge, hook trusted the database's `merge_status='ready'` and used the
-// stale merged_video_url that only contained the old clips.
+// v3 FIX (4.3.5b regenerate-staleness, June 2026)
+// =============================================================================
+// v2 fixed the case where clips were ADDED to a scene without invalidating
+// the cached merge. v3 extends that to handle REGENERATED clips:
+// when a clip is regenerated, its created_at stays the same — only updated_at
+// changes — so v2's created_at-based staleness check missed regenerates.
 //
-// Root cause: hook compared "what clips exist now" against "what clips
-// existed when hook mounted" — but missed the case where clips were added
-// BETWEEN merges (or BETWEEN page loads).
-//
-// Fix: when hook mounts, compare merge_updated_at against newest clip's
-// created_at. If newest clip is newer than the merge, the merge is stale
-// even if the DB says 'ready' — trigger a fresh merge immediately.
+// What v3 fixes:
+//   1. Staleness check uses MAX(clip.updated_at) instead of MAX(created_at)
+//      so regenerated clips are detected on page reload.
+//   2. Don't trigger a merge while any clip is in flight (queued/processing).
+//      Otherwise we'd merge an incomplete set during a regenerate (excluding
+//      the clip being regenerated), then have to re-merge once it finishes.
+//      That's the "stuck on merging" badge the user was seeing.
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
@@ -46,8 +48,11 @@ interface ClipSnapshot {
   id: string;
   status: string;
   generated_video_url: string | null;
-  // NEW: hook now needs created_at to compare against merge_updated_at
+  // v2 staleness signal — detects clips ADDED to a scene after the last merge.
   created_at?: string;
+  // v3 staleness signal — detects clips REGENERATED in a scene after the
+  // last merge (regenerates touch updated_at but not created_at).
+  updated_at?: string;
 }
 
 export function useSceneMerge(
@@ -72,7 +77,6 @@ export function useSceneMerge(
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastClipSignatureRef = useRef<string>('');
   const isTriggeringRef = useRef(false);
-  // NEW: track whether we've done the initial staleness check
   const initialStalenessCheckedRef = useRef(false);
 
   const completedClipSignature = clips
@@ -85,12 +89,25 @@ export function useSceneMerge(
     (c) => c.status === 'completed' && c.generated_video_url
   ).length;
 
-  // Find the newest completed clip's created_at — used for staleness detection
-  const newestClipCreatedAt = clips
-    .filter((c) => c.status === 'completed' && c.generated_video_url && c.created_at)
+  // v3 fix #2: if any clip is in flight (queued or processing), we should NOT
+  // trigger a merge. Wait for it to finish — otherwise we'd produce an
+  // intermediate merge missing that clip, then have to re-merge once it
+  // completes. The user sees the "merging" badge longer than needed.
+  const hasInFlightClips = clips.some(
+    (c) => c.status === 'queued' || c.status === 'processing'
+  );
+
+  // v3 fix #1: compute newest "touch" timestamp across all completed clips.
+  // Prefer updated_at (catches regenerates); fall back to created_at if the
+  // backend didn't return updated_at for some reason. This is what we compare
+  // against merge_updated_at for the on-mount staleness check.
+  const newestClipTouchedAt = clips
+    .filter((c) => c.status === 'completed' && c.generated_video_url)
     .reduce<string | null>((newest, c) => {
-      if (!newest) return c.created_at!;
-      return c.created_at! > newest ? c.created_at! : newest;
+      const touch = c.updated_at || c.created_at;
+      if (!touch) return newest;
+      if (!newest) return touch;
+      return touch > newest ? touch : newest;
     }, null);
 
   const fetchMergeStatus = useCallback(async () => {
@@ -143,7 +160,9 @@ export function useSceneMerge(
   }, [projectId, sceneId]);
 
   // On mount + when scene changes — fetch current merge status from server
-  // AND check if it's stale relative to the newest clip's created_at
+  // AND check if it's stale relative to the newest clip touch (created OR
+  // updated). This is the v3 fix: regenerates change updated_at but not
+  // created_at, so we use whichever is newer per clip.
   useEffect(() => {
     let cancelled = false;
 
@@ -157,26 +176,33 @@ export function useSceneMerge(
 
       const serverStatus = data.merge_status;
 
-      // === STALENESS CHECK ===
+      // === STALENESS CHECK (v3) ===
       // Even if server says 'ready', the merge might be stale because clips
-      // were added AFTER the merge completed. Compare timestamps.
+      // were added OR regenerated AFTER the merge completed. Compare the
+      // newest clip touch timestamp against the merge's update timestamp.
       const mergeIsStaleByTimestamp =
         serverStatus === 'ready' &&
         data.merge_updated_at &&
-        newestClipCreatedAt &&
-        newestClipCreatedAt > data.merge_updated_at;
+        newestClipTouchedAt &&
+        newestClipTouchedAt > data.merge_updated_at;
 
       if (mergeIsStaleByTimestamp) {
         console.log(
           '[useSceneMerge] Merge is stale by timestamp:',
           `merge=${data.merge_updated_at}`,
-          `newest_clip=${newestClipCreatedAt}`
+          `newest_clip_touch=${newestClipTouchedAt}`
         );
-        // Set status to stale and trigger a fresh merge
         setStatus('stale');
-        if (autoMerge && !initialStalenessCheckedRef.current && completedClipCount > 0) {
+        // Belt-and-braces: clear the stale URL from state so the player
+        // can't accidentally fall back to it if mergeReady flickers true.
+        setMergedVideoUrl(null);
+        if (
+          autoMerge &&
+          !initialStalenessCheckedRef.current &&
+          completedClipCount > 0 &&
+          !hasInFlightClips
+        ) {
           initialStalenessCheckedRef.current = true;
-          // Trigger after a tiny delay to let React settle
           setTimeout(() => {
             if (!cancelled) triggerMerge();
           }, 100);
@@ -193,8 +219,12 @@ export function useSceneMerge(
         setStatus('failed');
       } else if (serverStatus === 'stale') {
         setStatus('stale');
-        // If server itself says stale and we have clips, trigger merge
-        if (autoMerge && !initialStalenessCheckedRef.current && completedClipCount > 0) {
+        if (
+          autoMerge &&
+          !initialStalenessCheckedRef.current &&
+          completedClipCount > 0 &&
+          !hasInFlightClips
+        ) {
           initialStalenessCheckedRef.current = true;
           setTimeout(() => {
             if (!cancelled) triggerMerge();
@@ -202,8 +232,11 @@ export function useSceneMerge(
         }
       } else if (data.total_completed_clips > 0) {
         setStatus('pending');
-        // No merge exists yet — trigger one
-        if (autoMerge && !initialStalenessCheckedRef.current) {
+        if (
+          autoMerge &&
+          !initialStalenessCheckedRef.current &&
+          !hasInFlightClips
+        ) {
           initialStalenessCheckedRef.current = true;
           setTimeout(() => {
             if (!cancelled) triggerMerge();
@@ -221,9 +254,10 @@ export function useSceneMerge(
     projectId,
     sceneId,
     fetchMergeStatus,
-    newestClipCreatedAt,
+    newestClipTouchedAt,
     autoMerge,
     completedClipCount,
+    hasInFlightClips,
     triggerMerge,
   ]);
 
@@ -231,7 +265,11 @@ export function useSceneMerge(
     setTotalCompletedClips(completedClipCount);
   }, [completedClipCount]);
 
-  // Detect clip changes — if completed clips changed, mark stale and queue merge
+  // Detect clip changes — if completed clips changed, mark stale and queue
+  // a debounced merge. v3 fix: ALSO require no in-flight clips. Otherwise a
+  // regenerate fires this effect (because the clip dropped from the completed
+  // set), the debounce timer queues a merge with only the OTHER clips, and we
+  // get a useless intermediate merge before the regenerate finishes.
   useEffect(() => {
     if (lastClipSignatureRef.current === '') {
       lastClipSignatureRef.current = completedClipSignature;
@@ -246,11 +284,20 @@ export function useSceneMerge(
 
     if (status === 'ready') {
       setStatus('stale');
+      // Clear the stale URL — see comment in mount effect for rationale
+      setMergedVideoUrl(null);
     }
 
     if (!autoMerge) return;
     if (completedClipCount === 0) return;
     if (isTriggeringRef.current) return;
+    // v3 fix #2: don't merge while clips are still being regenerated
+    if (hasInFlightClips) {
+      console.log(
+        '[useSceneMerge] Skipping merge trigger — clips still in flight'
+      );
+      return;
+    }
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -267,6 +314,7 @@ export function useSceneMerge(
   }, [
     completedClipSignature,
     completedClipCount,
+    hasInFlightClips,
     status,
     autoMerge,
     debounceMs,

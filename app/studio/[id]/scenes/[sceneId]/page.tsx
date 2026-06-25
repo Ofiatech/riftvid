@@ -121,16 +121,7 @@ function PreviewPlayer({
   const nextClip = clips[activeClipIndex + 1] || null;
 
   // SEAMLESS MODE: when merged video is ready, play that ONE file instead of clip-by-clip.
-  // ====================================================================
-  // DIAGNOSTIC (4.3.5b regenerate-bug investigation, June 25 2026)
-  // Forcing clip-by-clip playback by disabling seamless merge mode.
-  // The merge code still runs in the background (and the watchdog still
-  // detects staleness) — we just ignore the merged URL when picking what
-  // to play. This isolates whether the bug is in the Cloudinary layer.
-  //
-  // To revert: change `false` back to `!!(mergeReady && mergedVideoUrl)`.
-  // ====================================================================
-  const useSeamlessMerged = false; // DIAGNOSTIC — was: !!(mergeReady && mergedVideoUrl);
+  const useSeamlessMerged = !!(mergeReady && mergedVideoUrl);
 
   const totalSceneDuration = clips
     .filter((c) => c.status === 'completed')

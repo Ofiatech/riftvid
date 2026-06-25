@@ -56,17 +56,36 @@ export interface MergeResult {
 
 /**
  * Uploads a single clip to Cloudinary, returns its public_id.
- * Idempotent — re-uploading the same clip overwrites cleanly.
+ *
+ * v5 FIX (4.3.5b regenerate-bug, June 2026):
+ * The public_id now includes a per-merge token (passed in by the caller).
+ * Previously it was purely positional ("clip-001"), which meant every
+ * regenerate-and-remerge produced the IDENTICAL stitched URL. Cloudinary's
+ * CDN caches derived/transformed URLs by URL string, so the old stitched
+ * video kept being served even after the source bytes were replaced. The
+ * `invalidate: true` flag clears the source URL's cache, but Cloudinary's
+ * docs confirm it does NOT automatically clear the cache for derived
+ * (transformed) URLs that include the source as an overlay, and propagation
+ * can take up to an hour anyway.
+ *
+ * With per-merge tokens, every merge produces a brand-new URL string. The
+ * CDN has never seen it, so there's nothing to serve stale. Fresh fetch,
+ * fresh bytes, every time.
+ *
+ * The cleanup step (cleanupExistingSourceClips, in mergeSceneClips) deletes
+ * everything under the scene's source-clips/ prefix before each new merge,
+ * so old-token files don't accumulate.
  */
 async function uploadClipToCloudinary(
   clip: ClipForMerge,
   userId: string,
   sceneId: string,
-  index: number
+  index: number,
+  mergeToken: string
 ): Promise<string> {
   const publicId = `riftvid/user_${userId}/scenes/${sceneId}/source-clips/clip-${String(
     index + 1
-  ).padStart(3, '0')}`;
+  ).padStart(3, '0')}-m${mergeToken}`;
 
   try {
     const result = await cloudinary.uploader.upload(clip.videoUrl, {
@@ -219,6 +238,14 @@ export async function mergeSceneClips(
 
   console.log(`Cloudinary merge: uploading ${clips.length} clips for scene ${sceneId}`);
 
+  // v5 FIX: generate a single per-merge token used for ALL clips in this
+  // merge. Each merge gets a fresh token, so the resulting concat URL is
+  // guaranteed unique per merge — even if the same clip files were uploaded
+  // again with no changes. This sidesteps Cloudinary's CDN derived-URL cache
+  // entirely (different URL = no cache to serve). See uploadClipToCloudinary
+  // for the full reasoning.
+  const mergeToken = Date.now().toString();
+
   // Step 1: Clean up any prior source clips for this scene
   await cleanupExistingSourceClips(userId, sceneId);
 
@@ -227,7 +254,7 @@ export async function mergeSceneClips(
 
   const publicIds = await Promise.all(
     sortedClips.map((clip, index) =>
-      uploadClipToCloudinary(clip, userId, sceneId, index)
+      uploadClipToCloudinary(clip, userId, sceneId, index, mergeToken)
     )
   );
 

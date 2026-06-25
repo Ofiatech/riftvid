@@ -24,27 +24,6 @@ interface StatusResponse {
 }
 
 // Helper: download from Fal URL and upload to Supabase Storage
-//
-// 4.3.5b regenerate-fix (June 2026):
-// =============================================================================
-// The clips-mode filename now includes a timestamp suffix. Without it, every
-// regeneration of the same clip wrote to the SAME file path (recordId-based),
-// which meant the public URL was identical before and after regen — even
-// though the bytes had been replaced via upsert. Browsers (and React's
-// <video src={...}> equality check) treat that as the same resource and
-// keep showing the cached old video.
-//
-// With the timestamp, each render produces a unique URL. React sees a new
-// src, browser fetches the new bytes, user sees the new clip.
-//
-// Side effect: old video files become orphans in storage. Storage cost grows
-// per regenerate. Same orphan pattern as source images (see PATCH endpoint
-// in clips/[clipId]/route.ts which already uses `source-${Date.now()}`). A
-// future cron job can clean orphans by user_id pattern.
-//
-// videos-mode keeps its original `${userId}/${recordId}.mp4` path because the
-// videos table doesn't have a regenerate flow (each render = new row = new ID
-// = naturally unique path).
 async function persistVideoToStorage(
   falVideoUrl: string,
   userId: string,
@@ -61,10 +40,9 @@ async function persistVideoToStorage(
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // For clips: timestamp in filename so regenerations produce unique URLs.
-  // For videos: keep the original recordId-only path (no regen flow there).
+  // Use different paths for clips vs videos for clarity
   const fileName = tableMode === 'clips'
-    ? `${userId}/clips/${recordId}/video-${Date.now()}.mp4`
+    ? `${userId}/clips/${recordId}/video.mp4`
     : `${userId}/${recordId}.mp4`;
 
   const { error } = await supabase.storage
@@ -231,21 +209,13 @@ export async function GET(
         permanentUrl = falVideoUrl; // fallback to Fal URL
       }
 
-      // Update record with completed status + video URL.
-      // We ALSO clear last_frame_url here for clips so any old extracted
-      // frame from a previous render doesn't linger. The LastFrameExtractor
-      // component will repopulate it from the new video once it's played.
-      const updatePayload: Record<string, unknown> = {
-        status: 'completed',
-        generated_video_url: permanentUrl,
-      };
-      if (tableMode === 'clips') {
-        updatePayload.last_frame_url = null;
-      }
-
+      // Update record with completed status + video URL
       await supabase
         .from(tableName)
-        .update(updatePayload)
+        .update({
+          status: 'completed',
+          generated_video_url: permanentUrl,
+        })
         .eq('id', record.id);
 
       // For clips, leave last_frame_url null — frontend can trigger extraction later

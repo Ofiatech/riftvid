@@ -36,10 +36,6 @@ interface ClipItem {
   last_frame_url: string | null;
   error_message: string | null;
   created_at: string;
-  // v3 staleness signal — regenerates update this but not created_at, so the
-  // merge hook needs it to detect a stale merge after a regenerate + reload.
-  // Optional because older clip rows may pre-date the field.
-  updated_at?: string;
 }
 
 interface SceneDetail {
@@ -1376,8 +1372,6 @@ export default function SceneStudioPage() {
       status: c.status,
       generated_video_url: c.generated_video_url,
       created_at: c.created_at,
-      // v3 staleness: lets the merge hook detect regenerated clips on reload
-      updated_at: c.updated_at,
     })) || [],
     { autoMerge: true, debounceMs: 3000 }
   );

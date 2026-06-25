@@ -36,6 +36,10 @@ interface ClipItem {
   last_frame_url: string | null;
   error_message: string | null;
   created_at: string;
+  // 4.3.5b regenerate-fix: pass updated_at to useSceneMerge so the staleness
+  // check can detect regenerated clips (whose created_at doesn't change).
+  // Optional in case backend response doesn't include it for older rows.
+  updated_at?: string;
 }
 
 interface SceneDetail {
@@ -1372,6 +1376,8 @@ export default function SceneStudioPage() {
       status: c.status,
       generated_video_url: c.generated_video_url,
       created_at: c.created_at,
+      // 4.3.5b regenerate-fix: lets watchdog detect regenerates on reload
+      updated_at: c.updated_at,
     })) || [],
     { autoMerge: true, debounceMs: 3000 }
   );

@@ -46,8 +46,13 @@ interface ClipSnapshot {
   id: string;
   status: string;
   generated_video_url: string | null;
-  // NEW: hook now needs created_at to compare against merge_updated_at
+  // Hook uses created_at to compare against merge_updated_at (catches new clips
+  // added to a scene after the last merge).
   created_at?: string;
+  // 4.3.5b regenerate-fix: also check updated_at. When a clip is REGENERATED,
+  // created_at stays the same — only updated_at changes — so without this the
+  // staleness check is blind to regenerates and never triggers a fresh merge.
+  updated_at?: string;
 }
 
 export function useSceneMerge(
@@ -85,12 +90,18 @@ export function useSceneMerge(
     (c) => c.status === 'completed' && c.generated_video_url
   ).length;
 
-  // Find the newest completed clip's created_at — used for staleness detection
-  const newestClipCreatedAt = clips
-    .filter((c) => c.status === 'completed' && c.generated_video_url && c.created_at)
+  // Find the newest "touch" timestamp across completed clips. We prefer
+  // updated_at (catches regenerates), and fall back to created_at when
+  // updated_at isn't present in the data. This single value is what we
+  // compare against the scene's merge_updated_at to decide if the merge
+  // is stale and needs to be re-run.
+  const newestClipTouchedAt = clips
+    .filter((c) => c.status === 'completed' && c.generated_video_url)
     .reduce<string | null>((newest, c) => {
-      if (!newest) return c.created_at!;
-      return c.created_at! > newest ? c.created_at! : newest;
+      const touch = c.updated_at || c.created_at;
+      if (!touch) return newest;
+      if (!newest) return touch;
+      return touch > newest ? touch : newest;
     }, null);
 
   const fetchMergeStatus = useCallback(async () => {
@@ -159,18 +170,18 @@ export function useSceneMerge(
 
       // === STALENESS CHECK ===
       // Even if server says 'ready', the merge might be stale because clips
-      // were added AFTER the merge completed. Compare timestamps.
+      // were added OR REGENERATED after the merge completed. Compare timestamps.
       const mergeIsStaleByTimestamp =
         serverStatus === 'ready' &&
         data.merge_updated_at &&
-        newestClipCreatedAt &&
-        newestClipCreatedAt > data.merge_updated_at;
+        newestClipTouchedAt &&
+        newestClipTouchedAt > data.merge_updated_at;
 
       if (mergeIsStaleByTimestamp) {
         console.log(
           '[useSceneMerge] Merge is stale by timestamp:',
           `merge=${data.merge_updated_at}`,
-          `newest_clip=${newestClipCreatedAt}`
+          `newest_clip_touched=${newestClipTouchedAt}`
         );
         // Set status to stale and trigger a fresh merge
         setStatus('stale');
@@ -221,7 +232,7 @@ export function useSceneMerge(
     projectId,
     sceneId,
     fetchMergeStatus,
-    newestClipCreatedAt,
+    newestClipTouchedAt,
     autoMerge,
     completedClipCount,
     triggerMerge,

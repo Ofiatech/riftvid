@@ -22,8 +22,31 @@
 // merged video once Cloudinary finishes processing (30-90s after first
 // request). We now trust the URL and let the player surface real errors
 // client-side via the video element's onError event.
+//
+// v5 FIX (4.3.5b regenerate-cache, June 2026):
+// =============================================================================
+// Before v5: public_ids were purely positional — `clip-001`, `clip-002`, etc.
+// When a clip was regenerated, the next merge uploaded the new bytes to the
+// SAME public_id (overwrite: true). The derived/concat URL built by
+// buildConcatUrl was a byte-for-byte identical string to the previous merge.
+// Cloudinary's CDN caches derived transformations by URL string — so it kept
+// serving the OLD merged video for that URL even after the source was
+// replaced. invalidate:true only invalidates source URLs, not derived ones.
+// Browser cache then made it double-sticky.
+//
+// v5: bake a per-render TOKEN into each clip's public_id, derived from the
+// clip's source videoUrl. Same render of a clip → same token → same
+// public_id (no wasted re-upload). Different render (after regenerate) →
+// different token → different public_id → different concat URL string →
+// CDN miss → new merged bytes get served.
+//
+// Token extraction: the previous fix made every clip's source video URL end
+// with `/video-{TIMESTAMP}.mp4`. That timestamp is a perfect render token.
+// We extract it via regex; for legacy clips whose URL pre-dates the timestamp
+// fix (still ending in plain `/video.mp4`), we hash the URL as fallback.
 
 import { v2 as cloudinary } from 'cloudinary';
+import { createHash } from 'crypto';
 
 if (process.env.CLOUDINARY_CLOUD_NAME) {
   cloudinary.config({
@@ -55,8 +78,31 @@ export interface MergeResult {
 // =============================================================================
 
 /**
+ * v5: extract a stable render token from a clip's source URL. Two cases:
+ *
+ *   1. Modern URL: `.../video-{TIMESTAMP}.mp4` → use the timestamp directly.
+ *      Same render → same token. Regenerate → new timestamp → new token.
+ *
+ *   2. Legacy URL: `.../video.mp4` (no timestamp, pre-fix) → hash the URL.
+ *      These clips can't be regenerated (regenerate goes through the new
+ *      timestamped code path), so their token is stable.
+ *
+ * Token is kept short (12 chars) to keep public_ids readable.
+ */
+function extractRenderToken(videoUrl: string): string {
+  const tsMatch = videoUrl.match(/\/video-(\d+)\.mp4(?:\?|$)/);
+  if (tsMatch) return tsMatch[1];
+
+  // Fallback for legacy URLs
+  return createHash('sha1').update(videoUrl).digest('hex').slice(0, 12);
+}
+
+/**
  * Uploads a single clip to Cloudinary, returns its public_id.
- * Idempotent — re-uploading the same clip overwrites cleanly.
+ *
+ * v5: public_id now includes a per-render token. Same render = same
+ * public_id (idempotent upload skips re-processing). Different render
+ * after regenerate = new public_id = new URL = no CDN cache hit.
  */
 async function uploadClipToCloudinary(
   clip: ClipForMerge,
@@ -64,9 +110,10 @@ async function uploadClipToCloudinary(
   sceneId: string,
   index: number
 ): Promise<string> {
+  const renderToken = extractRenderToken(clip.videoUrl);
   const publicId = `riftvid/user_${userId}/scenes/${sceneId}/source-clips/clip-${String(
     index + 1
-  ).padStart(3, '0')}`;
+  ).padStart(3, '0')}-r${renderToken}`;
 
   try {
     const result = await cloudinary.uploader.upload(clip.videoUrl, {
@@ -130,6 +177,10 @@ function extractCloudinaryError(err: unknown): string {
  * Removes prior source clips for this scene before re-uploading.
  * Prevents stale clips from leaking into a fresh merge.
  * Non-fatal — first merge has nothing to delete.
+ *
+ * v5 note: with per-render tokens in public_ids, the cleanup still works
+ * because it's keyed by the `source-clips/` prefix. All old-render uploads
+ * (with whatever tokens they had) get cleaned out before new ones go up.
  */
 async function cleanupExistingSourceClips(
   userId: string,
@@ -161,6 +212,10 @@ async function cleanupExistingSourceClips(
  *     /v1/CLIP_1_ID.mp4
  *
  * Clip 1 is the base. Clips 2+ are layered onto it in order via fl_splice.
+ *
+ * v5: because each clip's public_id now includes a render token, the resulting
+ * URL string is unique per render-set. No more CDN cache collisions across
+ * regenerates.
  */
 function buildConcatUrl(publicIds: string[]): string {
   if (publicIds.length === 0) {

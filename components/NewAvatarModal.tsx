@@ -46,6 +46,12 @@ interface NewAvatarModalProps {
   onClose: () => void;
   onCreated: () => void;
   onLimitReached: () => void;
+  // 4.3.5c-v2 — optional pre-filled character name, used when this modal is
+  // opened from UnknownCharactersModal's [Create avatar] flow. When provided,
+  // the name field is initialized to this on every open (the user can still
+  // edit it). Defaults to undefined for backward compatibility — all existing
+  // call sites work unchanged.
+  initialName?: string;
 }
 
 interface PhotoSlot {
@@ -94,6 +100,8 @@ export default function NewAvatarModal({
   onClose,
   onCreated,
   onLimitReached,
+  // 4.3.5c-v2 — pre-fill name on open
+  initialName,
 }: NewAvatarModalProps) {
   // === MODE TAB ===
   const [mode, setMode] = useState<ModalMode>('upload');
@@ -114,7 +122,11 @@ export default function NewAvatarModal({
   const [nextCostsCredit, setNextCostsCredit] = useState(false);
 
   // === SHARED FORM STATE ===
-  const [name, setName] = useState('');
+  // 4.3.5c-v2 — initialize name from initialName when provided. The useEffect
+  // below also keeps this in sync each time the modal re-opens with a
+  // different initialName (e.g. user resolves Marcus, then closes and
+  // re-opens for Adaeze).
+  const [name, setName] = useState(initialName ?? '');
   const [description, setDescription] = useState('');
   const [ageRange, setAgeRange] = useState<string | null>(null);
   const [gender, setGender] = useState<string | null>(null);
@@ -131,6 +143,18 @@ export default function NewAvatarModal({
       setDraftSessionId(makeDraftSessionId());
     }
   }, [open, draftSessionId]);
+
+  // 4.3.5c-v2 — sync name with initialName each time the modal opens. This
+  // covers the case where UnknownCharactersModal opens us for one character,
+  // user cancels, then opens us for a different character — we want the name
+  // field to update. We only respond to the open transition (false → true)
+  // so user edits during a single open session aren't overwritten.
+  useEffect(() => {
+    if (open) {
+      setName(initialName ?? '');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Clean up blob URLs on unmount
   useEffect(() => {
@@ -166,14 +190,17 @@ export default function NewAvatarModal({
     setAttemptCount(0);
     setCreditsBalance(null);
     setNextCostsCredit(false);
-    setName('');
+    // 4.3.5c-v2 — reset to initialName if provided so the next open starts
+    // pre-filled. resetAll runs on close, so this behaves correctly with
+    // either calling pattern.
+    setName(initialName ?? '');
     setDescription('');
     setAgeRange(null);
     setGender(null);
     setSaveMode('idle');
     setSaveError(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, [photos]);
+  }, [photos, initialName]);
 
   const handleClose = () => {
     if (saveMode === 'uploading' || genState === 'generating') return;

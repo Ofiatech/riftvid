@@ -17,6 +17,13 @@
 // whether the user already has them — that's a client-side step using the
 // already-fetched avatars list (saves a database round-trip and keeps fuzzy-
 // match logic in one place).
+//
+// v2 (post-launch test feedback) — system prompt rewritten to fix:
+//   1. Blurry/distant avatars when the user's scene prompt described
+//      characters as "far away" or "in the background" — GPT-4o was
+//      inheriting that context into the portrait prompt
+//   2. Multiple characters in a batch ending up with the same hairstyle,
+//      build, or general look (Sophia and Chukwuma looking like twins)
 
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
@@ -63,56 +70,93 @@ function getOpenAI(): OpenAI {
 }
 
 // ============================================================================
-// SYSTEM PROMPT
+// SYSTEM PROMPT (v2)
 // ============================================================================
 //
 // This is the contract with GPT-4o. We want strict JSON, no chatter, no
 // preamble, no "here's the JSON:" wrapper. The model returns either an empty
 // array (no characters detected) or a list of { name, portraitPrompt } objects.
 //
-// Rules baked in:
-//   - Skip pronouns ("he", "she", "they") even if they refer to a character
-//   - Skip common nouns that look capitalized due to sentence position
-//   - Skip place names, brand names, animal-only references
-//   - Treat dialogue-tagged names as characters ("Marcus said...")
-//   - Infer culturally appropriate appearance when prompt is sparse, using
-//     setting cues (Lagos → Nigerian, Tokyo → Japanese, etc.). If no setting
-//     cue is given, default to a neutral adult human description rather than
-//     defaulting to white/Western — this is Riftvid's African-creators
-//     superpower in action.
-//
-// The portrait prompt must be a SINGLE LINE, ready to feed to Fal Flux.
+// Key v2 changes vs v1:
+//   - PORTRAIT PROMPTS ARE ALWAYS CLOSE-UP HEAD-AND-SHOULDERS, regardless of
+//     how the character appears in the scene. The portrait is a reference
+//     photo for character identity, not a snapshot of the scene action.
+//   - When multiple characters are returned, GPT-4o is required to make them
+//     visibly distinct from each other (different hairstyles, builds, ages,
+//     facial features). No two characters in a single batch should look like
+//     siblings unless the original prompt explicitly says so.
+//   - More specific concrete details (hairstyle vocabulary, build vocabulary)
+//     to fight Fal Flux's tendency to default to generic faces.
 
-const SYSTEM_PROMPT = `You are Rift's character extraction engine. Given a short clip prompt or longer story, your job is to identify every distinct fictional CHARACTER named in the text — and for each one, write a one-line portrait description rich enough to generate a consistent reference photo.
+const SYSTEM_PROMPT = `You are Rift's character extraction engine. Given a clip prompt or longer story, your job is to identify every distinct fictional CHARACTER named in the text — and for each one, write a portrait prompt that will be used to generate a clean reference photo for that character.
 
-DEFINITION OF A CHARACTER:
-- A proper-noun name (or distinctive nickname) that refers to a person or human-like being in the scene.
-- Examples: "Marcus", "Adaeze", "Detective Rivers", "Old Mama Ngozi", "Captain Yusuf".
-- NOT characters: pronouns ("he", "she", "they"), generic roles without a name ("the bartender"), places ("Lagos", "Tokyo"), brands, animal-only references, time/day names ("Saturday").
+═══ DEFINITION OF A CHARACTER ═══
+- A proper-noun name (or distinctive nickname) referring to a person or human-like being in the scene.
+- Examples of characters: "Marcus", "Adaeze", "Detective Rivers", "Old Mama Ngozi", "Captain Yusuf".
+- NOT characters: pronouns ("he", "she", "they"), generic roles without a name ("the bartender"), places ("Lagos", "Tokyo"), brands, animal-only references, days of the week ("Saturday").
 
-DEFINITION OF A PORTRAIT PROMPT:
-- A single line of ~10–30 words describing the character's appearance.
-- Pull explicit details from the prompt (ethnicity, age, attire, build, hairstyle) when present.
-- When the prompt doesn't specify appearance, use SETTING CUES to infer culturally appropriate defaults:
-  - Nigerian / Lagos / Abuja / Pidgin → adult Nigerian by default
-  - Japanese / Tokyo / Osaka → adult Japanese by default
-  - Brazilian / Rio / São Paulo → adult Brazilian by default
-  - American / NYC / LA → mixed defaults; lean diverse
-  - No setting cue at all → neutral phrasing like "adult person" with no ethnicity assumed
-- Always include: "portrait orientation, neutral expression, studio lighting" at the end for consistency.
-- Never invent specific facts not implied by the prompt (e.g. don't add "scar on left cheek" if not mentioned).
+═══ PORTRAIT PROMPT RULES (READ CAREFULLY) ═══
 
-OUTPUT FORMAT:
-Strict JSON only, no preamble, no markdown fences, no commentary. Schema:
+These rules are STRICT. Violations produce bad avatars.
+
+RULE 1 — ALWAYS CLOSE-UP HEAD-AND-SHOULDERS:
+Every portrait prompt MUST describe a tight head-and-shoulders shot of the character, subject filling the frame, sharp focus, plain studio background. The avatar is a REFERENCE PHOTO of who this character IS, not a snapshot of what they're doing in the scene.
+- IGNORE all action context from the original prompt. "Marcus runs through the rain" → portrait describes Marcus's face/build, not running or rain.
+- IGNORE all distance context. "Sophia walks far down the street" → portrait is a CLOSE-UP of Sophia's face, not a distant figure.
+- IGNORE all environment context. "Tunde sits in a dark alley" → portrait has plain studio lighting, not dark alley lighting.
+- NEVER include words like "distant", "far away", "in the background", "small in frame", "blurred", "out of focus" — these ruin the reference photo.
+
+RULE 2 — VISUAL DIVERSITY ACROSS THE BATCH:
+When you return MULTIPLE characters in one response, each one MUST be visibly distinct from the others. They should look like different people, not siblings.
+- Vary hairstyles: one character with short curls, another with locs, another with a clean shave, etc.
+- Vary builds: slim, athletic, stocky, heavy-set, etc.
+- Vary ages within plausible scene range: one mid-20s, another late 30s, another 50s, etc.
+- Vary defining features: facial hair, glasses, scars, distinctive jewelry, etc.
+- Only allow visual similarity when the original prompt explicitly establishes it (e.g. "the twins Marcus and Markus" or "the three brothers").
+
+RULE 3 — SPECIFIC DETAILS, NOT GENERIC PHRASES:
+Vague descriptions produce vague-looking avatars. Be concrete.
+- Hairstyle vocabulary (pick one per character): short afro, tight curls, locs/dreadlocks, braids, bald, buzz cut, clean shave, low fade, high top, shoulder-length straight, bob cut, slicked back, messy bedhead, ponytail, side part, etc.
+- Build vocabulary (pick one per character): slim, lean, athletic, broad-shouldered, stocky, heavy-set, petite, tall and lanky, etc.
+- Always include a specific age range: "mid-20s", "late 30s", "early 50s", "70s with grey hair", etc.
+
+RULE 4 — CULTURALLY AWARE DEFAULTS:
+When the prompt doesn't specify a character's appearance explicitly, use SETTING CUES to infer culturally appropriate defaults:
+- Nigerian names / Lagos / Abuja / Pidgin context → adult Nigerian by default
+- Japanese names / Tokyo / Osaka → adult Japanese by default
+- Brazilian names / Rio / São Paulo → adult Brazilian by default
+- Latino/Hispanic names → adult Latino/Hispanic by default
+- American / NYC / LA → lean diverse; mix ethnicities across characters
+- No setting cue at all → distribute ethnicity across the batch for diversity rather than defaulting all to one
+- NEVER default unspecified characters to white/Western. That's Riftvid's positioning failure.
+
+RULE 5 — REQUIRED ENDING:
+Every portrait prompt MUST end with this exact phrase (or very close to it):
+"head and shoulders portrait, sharp focus, neutral expression, studio lighting, plain background"
+
+═══ OUTPUT FORMAT (strict JSON) ═══
+
+Schema:
 {
   "characters": [
-    { "name": "Marcus", "portraitPrompt": "Adult Nigerian man, business attire, portrait orientation, neutral expression, studio lighting" }
+    {
+      "name": "Marcus",
+      "portraitPrompt": "Adult Nigerian man, mid-30s, short afro, athletic build, light stubble, head and shoulders portrait, sharp focus, neutral expression, studio lighting, plain background"
+    },
+    {
+      "name": "Adaeze",
+      "portraitPrompt": "Nigerian woman, late 20s, shoulder-length braids, slim build, no makeup, head and shoulders portrait, sharp focus, neutral expression, studio lighting, plain background"
+    }
   ]
 }
 
 If no characters are detected, return: { "characters": [] }
 
-Be conservative. If you're unsure whether something is a character name, leave it out. False positives are worse than false negatives here — the user will be asked to auto-create an avatar for every name you return.`;
+═══ PRECISION ═══
+
+Be conservative on what counts as a character. False positives are worse than false negatives — the user will be prompted to create an avatar for every name you return. When in doubt, leave a borderline name out.
+
+But within the characters you DO return, be generous and specific in the portrait details. A specific 22-word portrait prompt produces a far better avatar than a generic 8-word one.`;
 
 // ============================================================================
 // HELPERS
@@ -162,8 +206,9 @@ function extractCharacters(parsed: unknown): DetectedCharacter[] {
       name,
       portraitPrompt:
         portraitPrompt ||
-        // Safety net: if GPT-4o forgot the portrait prompt, build a generic one
-        `Adult person, portrait orientation, neutral expression, studio lighting`,
+        // Safety net: if GPT-4o forgot the portrait prompt, build a minimal but
+        // valid close-up portrait so Fal Flux doesn't get a blurry distant shot
+        `Adult person, head and shoulders portrait, sharp focus, neutral expression, studio lighting, plain background`,
     });
   }
 
@@ -214,8 +259,8 @@ export async function POST(req: NextRequest) {
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: prompt },
         ],
-        temperature: 0.2,
-        max_tokens: 800,
+        temperature: 0.3, // slight bump from 0.2 — more variety in cross-character details
+        max_tokens: 1200, // bumped from 800 to accommodate richer portrait descriptions
         response_format: { type: 'json_object' },
       });
 

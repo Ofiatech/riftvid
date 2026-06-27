@@ -7,6 +7,9 @@ import {
   ArrowLeft, Globe, UserSquare2, Smartphone, Monitor, Square as SquareIcon,
   ImageIcon,
 } from 'lucide-react';
+// 4.3.5c — Unknown Characters modal & avatar typing
+import UnknownCharactersModal from '@/components/UnknownCharactersModal';
+import type { AvatarRecord } from '@/lib/avatars';
 
 type ChatMode = 'idle' | 'asking' | 'refining' | 'done' | 'error';
 type GenerationMode = 'idle' | 'submitting' | 'queued' | 'processing' | 'completed' | 'failed';
@@ -66,6 +69,12 @@ interface ClipGenerationModalProps {
   // First existing clip's source image URL (for aspect detection when scene
   // already has clips but no aspect_ratio set). null = no clips yet.
   firstExistingClipImageUrl?: string | null;
+}
+
+// 4.3.5c — DetectedCharacter mirrors the response from /api/prompts/detect-characters
+interface DetectedCharacter {
+  name: string;
+  portraitPrompt: string;
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -132,6 +141,25 @@ function detectAspectFromUrl(url: string): Promise<AspectRatio> {
   });
 }
 
+// 4.3.5c — escape a string so it's safe inside a regex
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// 4.3.5c — apply { from, to } substitutions to a prompt using word boundaries
+// so "Markus" → "Marcus" doesn't accidentally rewrite "Markuson".
+function applyNameSubstitutions(
+  prompt: string,
+  subs: Array<{ from: string; to: string }>
+): string {
+  let result = prompt;
+  for (const { from, to } of subs) {
+    const regex = new RegExp(`\\b${escapeRegex(from)}\\b`, 'gi');
+    result = result.replace(regex, to);
+  }
+  return result;
+}
+
 export default function ClipGenerationModal({
   open,
   onClose,
@@ -196,6 +224,25 @@ export default function ClipGenerationModal({
   // source image and the motion prompt section appears (same as Upload mode).
   const [promptCommitted, setPromptCommitted] = useState(false);
 
+  // ==========================================================================
+  // 4.3.5c — UNKNOWN CHARACTERS DETECTION STATE
+  // ==========================================================================
+  // The user's avatar library (fetched on modal open). Used to cross-reference
+  // detected character names against existing avatars.
+  const [avatars, setAvatars] = useState<AvatarRecord[]>([]);
+  // The characters GPT-4o extracted from the current prompt. Empty until
+  // detection runs.
+  const [detectedCharacters, setDetectedCharacters] = useState<DetectedCharacter[]>([]);
+  // Controls visibility of the UnknownCharactersModal. Opens when at least
+  // one detected character isn't already an exact match in the avatar library.
+  const [showUnknownsModal, setShowUnknownsModal] = useState(false);
+  // True while /api/prompts/detect-characters is in flight. Brief — typically
+  // a couple of seconds before either the modal opens or generation continues.
+  const [isDetectingCharacters, setIsDetectingCharacters] = useState(false);
+  // Remembers whether the in-flight image generation is a regen, so we can
+  // restore that context after the modal closes.
+  const [pendingImageGenIsRegen, setPendingImageGenIsRegen] = useState<boolean | null>(null);
+
   // Prompt + duration
   const [aiOptimization, setAiOptimization] = useState(true);
   const [prompt, setPrompt] = useState('');
@@ -251,6 +298,26 @@ export default function ClipGenerationModal({
   ]);
 
   const currentImageUrl = getCurrentImageUrl();
+
+  // 4.3.5c — fetch avatars when the modal opens, so the UnknownCharactersModal
+  // can cross-reference detected names without an extra round-trip.
+  const fetchAvatars = useCallback(async () => {
+    try {
+      const res = await fetch('/api/avatars');
+      if (!res.ok) return;
+      const data = await res.json();
+      setAvatars(data.avatars || []);
+    } catch (err) {
+      // Non-fatal — detection will still work, but fuzzy matching against
+      // existing avatars won't have anything to compare to.
+      console.warn('Avatars fetch failed (4.3.5c):', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    fetchAvatars();
+  }, [open, fetchAvatars]);
 
   // Open-time state sync
   useEffect(() => {
@@ -343,6 +410,11 @@ export default function ClipGenerationModal({
   if (!open) return null;
 
   const handleClose = () => {
+    // 4.3.5c: don't close the parent while the UnknownCharactersModal is up —
+    // the user needs to resolve it explicitly (the child's X button is the
+    // only way to back out).
+    if (showUnknownsModal) return;
+
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
@@ -368,6 +440,12 @@ export default function ClipGenerationModal({
     setPromptImageMode(null);
     setPromptRegenCount(0);
     setPromptCommitted(false);
+
+    // 4.3.5c: reset detection state
+    setDetectedCharacters([]);
+    setShowUnknownsModal(false);
+    setIsDetectingCharacters(false);
+    setPendingImageGenIsRegen(null);
 
     setPrompt('');
     setDuration(5);
@@ -474,8 +552,17 @@ export default function ClipGenerationModal({
   // promptGeneratedImageUrl. The user then clicks "Use This Image" to commit
   // it as the source for the clip, which feeds into the normal Upload-mode
   // flow on handleGenerate.
+  //
+  // 4.3.5c INSERTION:
+  //   - callGenerateImage() now first runs character detection
+  //   - If unknown characters are found, opens UnknownCharactersModal and pauses
+  //   - When the modal completes, proceedWithImageGeneration() runs (with any
+  //     name substitutions applied to the prompt)
+  //   - If no unknowns OR detection fails, proceedWithImageGeneration() runs
+  //     immediately — original behavior preserved
 
   const callGenerateImage = async (isRegen: boolean) => {
+    // === EXISTING VALIDATION (unchanged) ===
     if (!projectId || !sceneId) {
       setPromptImageError('Project or scene info is missing. Please reload the page.');
       return;
@@ -498,6 +585,62 @@ export default function ClipGenerationModal({
       return;
     }
 
+    // === 4.3.5c — CHARACTER DETECTION STEP ===
+    setIsDetectingCharacters(true);
+    setPromptImageError(null);
+
+    let detected: DetectedCharacter[] = [];
+    try {
+      const detectRes = await fetch('/api/prompts/detect-characters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: trimmed }),
+      });
+      if (detectRes.ok) {
+        const detectData = await detectRes.json();
+        detected = (detectData.detectedCharacters ?? []) as DetectedCharacter[];
+      } else {
+        // Non-fatal — fall through to generation without character resolution
+        console.warn('Character detection returned non-OK status, proceeding');
+      }
+    } catch (err) {
+      // Non-fatal — fall through. Generation still works, just without the
+      // unknown-character UX.
+      console.warn('Character detection failed, proceeding:', err);
+    }
+    setIsDetectingCharacters(false);
+
+    // Decide whether the modal needs to open. We only open it when at least
+    // one detected character isn't already an exact match in the user's
+    // avatar library — fuzzy and unknown both require user input, exact
+    // matches resolve silently.
+    const needsModal =
+      detected.length > 0 &&
+      detected.some((char) => {
+        const exactExists = avatars.some(
+          (a) => a.name.toLowerCase() === char.name.toLowerCase()
+        );
+        return !exactExists;
+      });
+
+    if (!needsModal) {
+      // Common case: no characters, all exact matches, or detection failed.
+      // Go straight to image generation with the user's prompt unchanged.
+      proceedWithImageGeneration(isRegen, trimmed);
+      return;
+    }
+
+    // Open the unknown-characters modal and pause. Image generation will
+    // resume from handleUnknownsResolved() once the user finishes.
+    setDetectedCharacters(detected);
+    setPendingImageGenIsRegen(isRegen);
+    setShowUnknownsModal(true);
+  };
+
+  // The actual image-generation fetch — extracted so we can call it either
+  // directly (no unknowns) or after the UnknownCharactersModal completes
+  // (with any name substitutions applied).
+  const proceedWithImageGeneration = async (isRegen: boolean, finalPrompt: string) => {
     setPromptImageGenerating(true);
     setPromptImageError(null);
     setOutOfCredits(false);
@@ -509,7 +652,7 @@ export default function ClipGenerationModal({
         body: JSON.stringify({
           projectId,
           sceneId,
-          prompt: trimmed,
+          prompt: finalPrompt,
           duration,
           aspectRatio: selectedAspect,
         }),
@@ -573,6 +716,57 @@ export default function ClipGenerationModal({
   // Undo "Use This Image" — go back to the image review phase.
   const handlePromptUncommit = () => {
     setPromptCommitted(false);
+  };
+
+  // ==========================================================================
+  // 4.3.5c — UNKNOWN CHARACTERS MODAL HANDLERS
+  // ==========================================================================
+
+  // User completed the modal — apply name substitutions to the prompt,
+  // refresh the avatars list, then continue with image generation.
+  const handleUnknownsResolved = async (result: {
+    createdAvatarIds: string[];
+    nameSubstitutions: Array<{ from: string; to: string }>;
+  }) => {
+    setShowUnknownsModal(false);
+
+    // Refresh the avatars list — we may have created new ones during the
+    // modal flow. This ensures the next generation correctly word-boundary-
+    // matches them.
+    if (result.createdAvatarIds.length > 0) {
+      await fetchAvatars();
+    }
+
+    // Apply name substitutions (e.g. "Markus" → "Marcus" when user picked
+    // the fuzzy match).
+    const trimmed = imagePrompt.trim();
+    const finalPrompt = applyNameSubstitutions(trimmed, result.nameSubstitutions);
+
+    // Resume the paused image generation
+    const isRegen = pendingImageGenIsRegen ?? false;
+    setPendingImageGenIsRegen(null);
+    setDetectedCharacters([]);
+    proceedWithImageGeneration(isRegen, finalPrompt);
+  };
+
+  // User dismissed the modal without resolving (X button) — abort the
+  // pending image generation. The user can re-tap Generate Image to retry.
+  const handleUnknownsClose = () => {
+    setShowUnknownsModal(false);
+    setDetectedCharacters([]);
+    setPendingImageGenIsRegen(null);
+  };
+
+  // User hit their avatar tier limit and chose to upgrade. Close everything
+  // and surface the upgrade path. For now we use the same simple alert that
+  // the existing out-of-credits flow uses — TierPickerModal integration here
+  // is a follow-up at 4.10 brand polish.
+  const handleAvatarLimitReached = () => {
+    setShowUnknownsModal(false);
+    setDetectedCharacters([]);
+    setPendingImageGenIsRegen(null);
+    alert('Upgrade your plan to add more avatars. 🚀');
+    handleClose();
   };
 
   // ==========================================================================
@@ -1238,7 +1432,7 @@ export default function ClipGenerationModal({
                       )}
 
                       {/* PHASE B: Prompt entry (aspect picked, no image generated yet) */}
-                      {!promptCommitted && selectedAspect && !promptGeneratedImageUrl && !promptImageGenerating && (
+                      {!promptCommitted && selectedAspect && !promptGeneratedImageUrl && !promptImageGenerating && !isDetectingCharacters && (
                         <>
                           {/* Aspect chip */}
                           <div className="mb-3 flex items-center gap-2">
@@ -1302,6 +1496,15 @@ export default function ClipGenerationModal({
                         </>
                       )}
 
+                      {/* PHASE B.5 — 4.3.5c — Detecting characters (brief — covered by modal if needed) */}
+                      {!promptCommitted && isDetectingCharacters && (
+                        <div className="rounded-xl border border-[#1f2937] bg-white/[0.02] p-6 flex flex-col items-center text-center">
+                          <Loader2 className="w-7 h-7 text-purple-400 animate-spin mb-2" strokeWidth={2} />
+                          <div className="text-[13px] font-medium text-white mb-1">🔍 Recognizing your cast...</div>
+                          <div className="text-[11px] text-zinc-500">A moment to spot any characters in your prompt</div>
+                        </div>
+                      )}
+
                       {/* PHASE C: Image generating (spinner) */}
                       {!promptCommitted && promptImageGenerating && (
                         <div className="rounded-xl border border-[#1f2937] bg-white/[0.02] p-8 flex flex-col items-center text-center">
@@ -1312,7 +1515,7 @@ export default function ClipGenerationModal({
                       )}
 
                       {/* PHASE D: Image ready, awaiting commit (Regenerate / Use This Image) */}
-                      {!promptCommitted && !promptImageGenerating && promptGeneratedImageUrl && (
+                      {!promptCommitted && !promptImageGenerating && !isDetectingCharacters && promptGeneratedImageUrl && (
                         <>
                           {/* Top chips */}
                           <div className="mb-3 flex items-center gap-2">
@@ -1786,6 +1989,18 @@ export default function ClipGenerationModal({
           )}
         </div>
       </div>
+
+      {/* ====================================================================
+          4.3.5c — UNKNOWN CHARACTERS MODAL (renders ABOVE this modal at z-60)
+          ==================================================================== */}
+      <UnknownCharactersModal
+        open={showUnknownsModal}
+        detectedCharacters={detectedCharacters}
+        avatars={avatars}
+        onClose={handleUnknownsClose}
+        onAllResolved={handleUnknownsResolved}
+        onAtLimit={handleAvatarLimitReached}
+      />
     </div>
   );
 }

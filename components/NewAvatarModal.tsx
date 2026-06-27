@@ -475,7 +475,11 @@ export default function NewAvatarModal({
       (mode === 'generate' && genState === 'preview' && generatedUrl !== null));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={handleClose}>
+    // 4.3.5c-v2 hotfix — z-[80] (was z-50) so this modal renders ABOVE
+    // UnknownCharactersModal (z-60) and its blocking overlay (z-70) when
+    // opened from within it. Standalone use from the Avatars page is
+    // unaffected (nothing else above z-50 there).
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" onClick={handleClose}>
       <div className="absolute inset-0 bg-black/70 animate-backdrop-in" />
       <div
         className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1f2937] bg-[#0a0a0b] shadow-2xl animate-modal-in"

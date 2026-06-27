@@ -57,6 +57,13 @@ interface DetectResponseBody {
   detectedCharacters: DetectedCharacter[];
   /** Echoed back for client-side cache busting if needed */
   promptHash: string;
+  /**
+   * v2 hotfix — set to true when both GPT-4o attempts failed and we're
+   * returning the empty-array fallback. Reserved for future ClipGenerationModal
+   * use: show a "Detection unavailable — retry?" warning instead of silently
+   * proceeding to image generation with no character resolution.
+   */
+  detectionFailed?: boolean;
 }
 
 // ============================================================================
@@ -249,48 +256,84 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Call GPT-4o
+    // Call GPT-4o — with retry-once logic for transient failures
+    // (rate limits, timeouts, brief OpenAI hiccups). Two attempts total,
+    // 500ms delay between them. If both fail, surface detectionFailed:true
+    // so the frontend can react (currently still falls back silently to
+    // preserve existing ClipGenerationModal behavior).
     const openai = getOpenAI();
-    let raw: string;
-    try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.3, // slight bump from 0.2 — more variety in cross-character details
-        max_tokens: 1200, // bumped from 800 to accommodate richer portrait descriptions
-        response_format: { type: 'json_object' },
-      });
+    let raw: string | undefined;
+    let lastError: Error | undefined;
+    const MAX_ATTEMPTS = 2;
+    const RETRY_DELAY_MS = 500;
 
-      raw = completion.choices?.[0]?.message?.content?.trim() ?? '';
-      if (!raw) throw new Error('Empty response from GPT-4o');
-    } catch (err) {
-      console.error('GPT-4o character detection failed:', err);
-      // Don't block the user — return empty list, they can still generate.
-      // The existing word-boundary detection in /api/clips/generate-from-prompt
-      // will pick up any avatars that DO match by exact name.
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.3, // slight bump from 0.2 — more variety in cross-character details
+          max_tokens: 1200, // bumped from 800 to accommodate richer portrait descriptions
+          response_format: { type: 'json_object' },
+        });
+
+        const candidate = completion.choices?.[0]?.message?.content?.trim() ?? '';
+        if (!candidate) throw new Error('Empty response from GPT-4o');
+        raw = candidate;
+        break; // success — exit retry loop
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.error(
+          `[detect-characters] attempt ${attempt}/${MAX_ATTEMPTS} failed:`,
+          lastError.message
+        );
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        }
+      }
+    }
+
+    // Both attempts failed — log loudly so this is visible in Vercel logs,
+    // then fall back to empty array WITH the detectionFailed flag set.
+    if (!raw) {
+      console.error(
+        '[detect-characters] ⚠️ FULL FAILURE after',
+        MAX_ATTEMPTS,
+        'attempts — falling back to empty list. Last error:',
+        lastError?.message
+      );
       return NextResponse.json<DetectResponseBody>({
         detectedCharacters: [],
         promptHash: hashPrompt(prompt),
+        detectionFailed: true,
       });
     }
 
     // Parse + validate the model's JSON
     let detectedCharacters: DetectedCharacter[];
+    let parseFailed = false;
     try {
       const parsed = parseModelJson(raw);
       detectedCharacters = extractCharacters(parsed);
     } catch (err) {
-      console.error('Failed to parse GPT-4o response:', err, 'raw:', raw);
+      console.error(
+        '[detect-characters] ⚠️ JSON parse failed — falling back to empty list. raw:',
+        raw,
+        'error:',
+        err
+      );
       // Same graceful fallback — never block the user on a parse error
       detectedCharacters = [];
+      parseFailed = true;
     }
 
     return NextResponse.json<DetectResponseBody>({
       detectedCharacters,
       promptHash: hashPrompt(prompt),
+      ...(parseFailed ? { detectionFailed: true } : {}),
     });
   } catch (err) {
     console.error('POST /api/prompts/detect-characters error:', err);
